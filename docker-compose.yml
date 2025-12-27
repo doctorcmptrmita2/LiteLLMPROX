@@ -1,0 +1,188 @@
+# =============================================================================
+# CODEXFLOW.DEV - Docker Compose Configuration
+# Development environment
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ===========================================================================
+  # LARAVEL APPLICATION
+  # ===========================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codexflow-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=local
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_DATABASE=${DB_DATABASE:-codexflow}
+      - DB_USERNAME=${DB_USERNAME:-codexflow}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - LITELLM_BASE_URL=http://litellm:4000
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+    volumes:
+      - .:/var/www/html
+      - /var/www/html/vendor
+      - /var/www/html/node_modules
+    depends_on:
+      - mysql
+      - redis
+      - litellm
+    networks:
+      - codexflow-network
+
+  # ===========================================================================
+  # QUEUE WORKER
+  # ===========================================================================
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codexflow-queue
+    restart: unless-stopped
+    command: php artisan queue:work --tries=3 --timeout=90
+    environment:
+      - APP_ENV=local
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_DATABASE=${DB_DATABASE:-codexflow}
+      - DB_USERNAME=${DB_USERNAME:-codexflow}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    volumes:
+      - .:/var/www/html
+      - /var/www/html/vendor
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - codexflow-network
+
+  # ===========================================================================
+  # SCHEDULER
+  # ===========================================================================
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codexflow-scheduler
+    restart: unless-stopped
+    command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction & sleep 60; done"
+    environment:
+      - APP_ENV=local
+      - DB_HOST=mysql
+      - DB_DATABASE=${DB_DATABASE:-codexflow}
+      - DB_USERNAME=${DB_USERNAME:-codexflow}
+      - DB_PASSWORD=${DB_PASSWORD:-secret}
+      - REDIS_HOST=redis
+    volumes:
+      - .:/var/www/html
+      - /var/www/html/vendor
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - codexflow-network
+
+  # ===========================================================================
+  # MYSQL DATABASE
+  # ===========================================================================
+  mysql:
+    image: mysql:8.0
+    container_name: codexflow-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}
+      MYSQL_DATABASE: ${DB_DATABASE:-codexflow}
+      MYSQL_USER: ${DB_USERNAME:-codexflow}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - codexflow-network
+    command: --default-authentication-plugin=mysql_native_password
+
+  # ===========================================================================
+  # REDIS
+  # ===========================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: codexflow-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server ${REDIS_PASSWORD:+--requirepass $REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      - codexflow-network
+
+  # ===========================================================================
+  # LITELLM PROXY
+  # ===========================================================================
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: codexflow-litellm
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      # Master key
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY}
+      
+      # Anthropic keys (3 org pool)
+      - ANTHROPIC_KEY_ORG_A=${ANTHROPIC_KEY_ORG_A}
+      - ANTHROPIC_KEY_ORG_B=${ANTHROPIC_KEY_ORG_B}
+      - ANTHROPIC_KEY_ORG_C=${ANTHROPIC_KEY_ORG_C}
+      
+      # OpenAI keys
+      - OPENAI_API_KEY_PLANNER=${OPENAI_API_KEY_PLANNER}
+      - OPENAI_API_KEY_GRACE=${OPENAI_API_KEY_GRACE}
+      
+      # OpenRouter (Llama FREE)
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      
+      # Redis
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      
+      # Database (optional)
+      - DATABASE_URL=mysql://${DB_USERNAME:-codexflow}:${DB_PASSWORD:-secret}@mysql:3306/${DB_DATABASE:-codexflow}
+    volumes:
+      - ./infra/litellm/proxy_config.yaml:/app/config.yaml
+    command: --config /app/config.yaml --port 4000 --detailed_debug
+    depends_on:
+      - redis
+    networks:
+      - codexflow-network
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  codexflow-network:
+    driver: bridge
+

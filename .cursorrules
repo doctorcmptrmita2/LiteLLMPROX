@@ -1,0 +1,357 @@
+# CodexFlow.dev — Cursor AI Rules
+# Version: 2.0 (Decompose Pipeline Edition)
+# Date: 27 Aralık 2025
+
+## 🎯 PROJE KİMLİĞİ
+
+Bu proje **CodexFlow.dev** - Cursor AI için TL bazlı LLM Gateway platformu.
+
+Temel özellikler:
+- 4 LiteLLM alias: cf-fast, cf-deep, cf-planner, cf-grace
+- Decompose Pipeline: GPT-5 nano planner + Claude executor
+- 3 Anthropic org key havuzu
+- Grace Lane fallback (kota bitince)
+- %30 kar marjı hedefi
+
+---
+
+## 🏗️ MİMARİ PRENSİPLER
+
+### LiteLLM Alias'ları
+```
+cf-fast           → Claude Haiku 3.5              → Hızlı, basit işler
+cf-deep           → Claude Sonnet 4               → Karmaşık logic
+cf-planner        → GPT-4o-mini                   → Plan/chunk JSON (ucuz)
+cf-grace          → Llama 3.1 405B (OpenRouter)   → Kota bitince (ÜCRETSİZ!)
+cf-grace-fallback → GPT-4o-mini                   → Llama fail olursa
+```
+
+### Grace Lane Stratejisi
+```
+Kullanıcı kotası bitti
+    ↓
+cf-grace (Llama 405B FREE) dene
+    ↓
+Başarılı? → Return response (maliyet: $0)
+    ↓
+Fail? → cf-grace-fallback (GPT-4o-mini)
+    ↓
+Return response (maliyet: $0.15-0.60/1M)
+```
+
+### Decompose Pipeline
+Büyük request (8K+ token veya 24K+ karakter) geldiğinde:
+1. **Planner (cf-planner):** JSON plan üret
+2. **Chunk A (cf-fast):** Schema + models
+3. **Chunk B (cf-deep):** Gateway core
+4. **Chunk C (cf-fast):** Jobs + tests
+
+Hard limits:
+- Max 1 planner + 3 chunk = 4 call
+- Chunk başına max 5 dosya
+- Total timeout: 8 dakika
+
+### Kota Sistemi
+```
+Monthly (fast/deep) → Redis DECRBY atomic
+Daily safety caps → Günlük spike önleme
+Grace (daily only) → Kota bitince fallback
+Planner → Sistem overhead, kullanıcı kotasından düşmez
+```
+
+---
+
+## 📁 DOSYA YAPISI
+
+```
+app/
+├── Http/Controllers/
+│   ├── Api/V1/           # Gateway, Project, ApiKey, Usage
+│   ├── Auth/             # Login, Logout
+│   ├── Dashboard/        # Customer UI
+│   └── Admin/            # Admin UI
+├── Services/
+│   ├── Llm/              # Gateway, Decompose, LiteLLM client
+│   ├── Quota/            # Quota check, decrement, sync
+│   ├── ApiKey/           # Key generation, validation
+│   └── Usage/            # Aggregation, reporting
+├── Middleware/           # Auth, RateLimit, Quota, RequestId
+├── Jobs/                 # Aggregate, Prune, Sync
+├── Exceptions/Llm/       # Custom exceptions
+└── Models/               # Eloquent models
+
+config/
+├── litellm.php           # LiteLLM connection + aliases
+└── codexflow.php         # Plans, quotas, decompose settings
+
+infra/
+├── litellm/proxy_config.yaml
+└── easypanel/README.md
+```
+
+---
+
+## ✅ KOD YAZIM KURALLARI
+
+### Genel
+- PSR-12 standardı
+- Türkçe yorum YAZMA, İngilizce kullan
+- Single Responsibility prensibi
+- DRY (Don't Repeat Yourself)
+
+### Laravel Özel
+- Form validasyonu: FormRequest sınıfları
+- API response: Resources kullan
+- İş mantığı: Service katmanında
+- Try/catch: Sadece Controller ve Job'larda
+
+### Database
+- Migration: `down()` methodu zorunlu
+- Index: Foreign key + sık sorgulanan alanlar
+- Enum: MySQL enum kullan
+- Timestamp: Laravel conventions
+
+### Güvenlik
+- API key: Bcrypt hash + prefix lookup
+- SQL: Query Builder veya Eloquent (raw SQL yok)
+- CSRF: API routes hariç aktif
+- Rate limit: Redis-based
+
+---
+
+## 🔧 DECOMPOSE KURALLARI
+
+### Trigger Koşulları
+```php
+// Otomatik trigger
+$shouldDecompose = 
+    $request->header('x-decompose') === '1' ||
+    $estimatedTokens >= 8000 ||
+    strlen(json_encode($messages)) >= 24000;
+```
+
+### Planner JSON Schema
+```json
+{
+  "summary": ["line1", "line2"],
+  "chunks": [
+    {
+      "id": "A",
+      "title": "...",
+      "goal": "...",
+      "files": ["path1", "path2"],
+      "tier": "fast|deep",
+      "max_output_tokens": 700
+    }
+  ],
+  "execution_order": "parallel|sequential"
+}
+```
+
+### Chunk Execution
+- Sadece gerekli dosya parçalarını context'e ekle
+- max_output_tokens zorunlu
+- diff-only output
+- Fail eden chunk tekrar, tamamı değil
+
+---
+
+## 📊 QUOTA MUHASEBESİ
+
+### Redis Keys
+```
+quota:monthly:{userId}:{YYYY-MM}:fast_in
+quota:monthly:{userId}:{YYYY-MM}:fast_out
+quota:monthly:{userId}:{YYYY-MM}:deep_in
+quota:monthly:{userId}:{YYYY-MM}:deep_out
+quota:daily:{userId}:{YYYY-MM-DD}:fast
+quota:daily:{userId}:{YYYY-MM-DD}:deep
+quota:daily:{userId}:{YYYY-MM-DD}:grace
+```
+
+### Atomic Decrement Flow
+```php
+// Pre-authorize
+$estimated = $this->estimateTokens($messages);
+$remaining = Redis::decrby($key, $estimated);
+if ($remaining < 0) {
+    Redis::incrby($key, $estimated); // Rollback
+    throw new QuotaExceededException();
+}
+
+// Post-adjust (after LLM response)
+$actual = $response->usage->total_tokens;
+$delta = $actual - $estimated;
+Redis::decrby($key, $delta);
+```
+
+### Fallback Zinciri
+```
+deep exhausted → try fast
+fast exhausted → try grace (daily)
+grace exhausted → 429 + Retry-After
+```
+
+---
+
+## 🚫 YAPILMAMASI GEREKENLER
+
+1. **Vendor SDK kullanma** - Tüm LLM çağrıları LiteLLM üzerinden
+2. **Full file rewrite** - Sadece diff/patch
+3. **Hardcoded secrets** - Her şey ENV'de
+4. **Direct DB query for quota** - Redis kullan
+5. **Tek shot büyük request** - Decompose et
+6. **Planner'a prose yazdırma** - Sadece JSON
+7. **Chunk'ta tüm repo context** - Sadece gerekli dosyalar
+
+---
+
+## 📝 COMMIT MESAJ FORMATI
+
+```
+feat: Add decompose pipeline for large requests
+fix: Quota race condition with Redis DECRBY
+refactor: Extract TierSelector from GatewayService
+test: Add concurrent quota tests
+docs: Update API documentation
+chore: Update dependencies
+```
+
+---
+
+## 🧪 TEST KURALLARI
+
+### Feature Tests
+- Mock LiteLLM responses
+- Test decompose trigger
+- Test quota exhaustion fallback
+- Test concurrent requests
+
+### Unit Tests
+- Her service için ayrı test
+- Edge case'ler dahil
+- Pure function test (no DB)
+
+---
+
+## 🎨 UI KURALLARI
+
+### Stack
+- Blade + Tailwind CSS
+- Alpine.js (interactivity)
+- Chart.js (graphs)
+
+### Tasarım
+- Modern, minimalist
+- Türkçe arayüz
+- Mobile responsive
+- Dark mode desteği (opsiyonel)
+
+---
+
+## 📋 PART SIRASI
+
+```
+PART 0 → LiteLLM proxy_config.yaml (4 alias)
+PART 1 → Migrations + Models + Config
+PART 2 → Auth + API Keys + Middleware
+PART 3 → Gateway Core + Decompose Pipeline
+PART 4 → Usage + Jobs + Scheduler
+PART 5 → Dashboards (Landing + Customer + Admin)
+PART 6 → Tests + Infra + Deployment
+```
+
+---
+
+## 🔑 ENV DEĞİŞKENLERİ
+
+```env
+# LiteLLM
+LITELLM_BASE_URL=http://localhost:4000
+LITELLM_MASTER_KEY=
+
+# Anthropic (3 org)
+ANTHROPIC_KEY_ORG_A=
+ANTHROPIC_KEY_ORG_B=
+ANTHROPIC_KEY_ORG_C=
+
+# OpenAI (planner + grace fallback)
+OPENAI_API_KEY_PLANNER=
+OPENAI_API_KEY_GRACE=
+
+# OpenRouter (Llama 405B FREE - Grace Lane primary)
+OPENROUTER_API_KEY=
+
+# Database
+DB_HOST=
+DB_DATABASE=codexflow
+DB_USERNAME=
+DB_PASSWORD=
+
+# Redis
+REDIS_HOST=
+REDIS_PASSWORD=
+```
+
+---
+
+## 💡 HIZLI REFERANS
+
+### Tier Limitleri
+| Tier | Max Input | Max Output | Timeout | Model |
+|------|-----------|------------|---------|-------|
+| fast | 8000 | 900 | 60s | Claude Haiku |
+| deep | 16000 | 1400 | 120s | Claude Sonnet |
+| planner | 12000 | 500 | 30s | GPT-4o-mini |
+| grace | 8000 | 800 | 90s | Llama 405B (FREE) |
+| grace-fallback | 8000 | 800 | 60s | GPT-4o-mini |
+
+### Maliyet (USD per 1M token)
+| Tier | Input | Output | Not |
+|------|-------|--------|-----|
+| fast | $0.80 | $4.00 | Claude Haiku |
+| deep | $3.00 | $15.00 | Claude Sonnet |
+| planner | $0.15 | $0.60 | GPT-4o-mini |
+| grace | **$0** | **$0** | Llama 405B FREE! |
+| grace-fallback | $0.15 | $0.60 | GPT-4o-mini |
+
+### Trial Plan (24 Saat Ücretsiz)
+| Tier | Input | Output | Requests |
+|------|-------|--------|----------|
+| fast | 200K | 40K | 100 |
+| deep | 50K | 10K | 20 |
+| grace | **SINIRSIZ** | **SINIRSIZ** | **SINIRSIZ** |
+
+> Trial'da kota biterse Llama 405B FREE ile sınırsız devam!
+
+### Pro Plan Kotaları
+| Tier | Input | Output | Requests |
+|------|-------|--------|----------|
+| fast | 6M | 1.2M | 1500 |
+| deep | 400K | 80K | 150 |
+| grace | - | - | 50/gün |
+
+---
+
+## 🎁 TRIAL SİSTEMİ
+
+### Özellikler
+- **24 saat** ücretsiz (FOMO yaratır!)
+- Kredi kartı gerektirmez
+- Email doğrulaması zorunlu
+- Kota biterse **Llama 405B FREE** ile sınırsız devam
+
+### Anti-Abuse
+- Email domain başına max 3 trial
+- IP başına max 2 trial
+- Temp mail servisleri engelli
+
+### Dönüşüm
+- Saat 12, 20, 23: Hatırlatma emaili
+- 24 saat içinde upgrade'de %10 indirim
+- Aciliyet = yüksek conversion rate
+
+---
+
+*CodexFlow.dev Cursor Rules v2.0*
+
