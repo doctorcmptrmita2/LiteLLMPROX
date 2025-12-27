@@ -1,168 +1,379 @@
-# EasyPanel Deployment Guide for CodexFlow.dev
+# 🚀 EasyPanel Deploy Yol Haritası - CodexFlow.dev
 
-## Prerequisites
+## 📋 Ön Gereksinimler
 
-- OVH KS4 server (or equivalent)
-- EasyPanel installed
-- Domain pointed to server (e.g., api.codexflow.dev)
-- SSL certificate (Let's Encrypt)
+| Gereksinim | Açıklama |
+|------------|----------|
+| 🖥️ Server | OVH KS4 veya benzeri (4 core, 16GB RAM, 160GB SSD) |
+| 🎛️ Panel | EasyPanel kurulu |
+| 🌐 Domain | api.codexflow.dev (DNS ayarlanmış) |
+| 🔐 API Keys | Anthropic + OpenRouter |
 
-## Services to Create
+---
 
-### 1. MySQL 8 Database
+## 🔑 GEREKLİ API KEYS
 
-```yaml
-Name: codexflow-db
-Image: mysql:8
-Persistent Volume: /var/lib/mysql
-Environment:
-  MYSQL_ROOT_PASSWORD: <strong-password>
-  MYSQL_DATABASE: codexflow
-  MYSQL_USER: codexflow
-  MYSQL_PASSWORD: <strong-password>
+| Key | Nereden Alınır | Zorunlu |
+|-----|----------------|---------|
+| `ANTHROPIC_KEY_ORG_A` | https://console.anthropic.com/ | ✅ |
+| `OPENROUTER_API_KEY` | https://openrouter.ai/keys | ✅ |
+
+> **Not:** Sadece 2 key yeterli! OpenRouter üzerinden hem Llama FREE hem GPT-4o-mini kullanılıyor.
+
+---
+
+## 📦 ADIM 1: EasyPanel'de Proje Oluştur
+
+1. EasyPanel Dashboard → **New Project**
+2. İsim: `codexflow`
+3. **Create**
+
+---
+
+## 📦 ADIM 2: Git Repository Bağla
+
+1. Proje içinde → **Add Service** → **App**
+2. **Source**: Git Repository
+3. **Repository URL**: `https://github.com/KULLANICI/LiteLLMPROX.git`
+4. **Branch**: `main`
+5. **Build Method**: Dockerfile
+
+---
+
+## 📦 ADIM 3: Servisleri Oluştur
+
+### 3.1 MySQL Database
+
+```
+Service Type: Database → MySQL
+Name: mysql
+Version: 8.0
+Root Password: <güçlü-şifre>
+Database: codexflow
+Username: codexflow
+Password: <güçlü-şifre>
 ```
 
-### 2. Redis 7
+### 3.2 Redis
 
-```yaml
-Name: codexflow-redis
-Image: redis:7-alpine
-Command: redis-server --requirepass <redis-password>
-Persistent Volume: /data
+```
+Service Type: Database → Redis
+Name: redis
+Version: 7
+Password: (boş bırakılabilir)
 ```
 
-### 3. LiteLLM Proxy
+### 3.3 LiteLLM Proxy
 
-```yaml
-Name: codexflow-litellm
+```
+Service Type: App → Docker Image
+Name: litellm
 Image: ghcr.io/berriai/litellm:main-latest
 Port: 4000
+
 Command: --config /app/config.yaml --port 4000
+
 Volumes:
-  - ./proxy_config.yaml:/app/config.yaml
-Environment:
-  LITELLM_MASTER_KEY: <master-key>
-  ANTHROPIC_KEY_ORG_A: <key>
-  ANTHROPIC_KEY_ORG_B: <key>
-  ANTHROPIC_KEY_ORG_C: <key>
-  OPENAI_API_KEY_PLANNER: <key>
-  OPENAI_API_KEY_GRACE: <key>
-  OPENROUTER_API_KEY: <key>
-  REDIS_HOST: codexflow-redis
-  REDIS_PORT: 6379
-  REDIS_PASSWORD: <redis-password>
+  Source: ./infra/litellm/proxy_config.yaml
+  Target: /app/config.yaml
+
+Environment Variables:
+  LITELLM_MASTER_KEY=sk-codexflow-master-key-DEGISTIR
+  ANTHROPIC_KEY_ORG_A=sk-ant-api03-xxxxx
+  ANTHROPIC_KEY_ORG_B=${ANTHROPIC_KEY_ORG_A}
+  ANTHROPIC_KEY_ORG_C=${ANTHROPIC_KEY_ORG_A}
+  OPENROUTER_API_KEY=sk-or-v1-xxxxx
+  REDIS_HOST=redis
+  REDIS_PORT=6379
 ```
 
-### 4. Laravel Application
+### 3.4 Laravel App (Ana Uygulama)
 
-```yaml
-Name: codexflow-app
-Build: From repository
+```
+Service Type: App → Git
+Name: app
 Dockerfile: Dockerfile
 Port: 8000
-Environment: (see env.example)
+
+Environment Variables:
+  APP_NAME=CodexFlow
+  APP_ENV=production
+  APP_DEBUG=false
+  APP_URL=https://api.codexflow.dev
+  
+  DB_CONNECTION=mysql
+  DB_HOST=mysql
+  DB_PORT=3306
+  DB_DATABASE=codexflow
+  DB_USERNAME=codexflow
+  DB_PASSWORD=<mysql-şifresi>
+  
+  REDIS_HOST=redis
+  REDIS_PORT=6379
+  
+  CACHE_DRIVER=redis
+  QUEUE_CONNECTION=redis
+  SESSION_DRIVER=redis
+  
+  LITELLM_BASE_URL=http://litellm:4000
+  LITELLM_MASTER_KEY=sk-codexflow-master-key-DEGISTIR
 ```
 
-### 5. Laravel Queue Worker
+### 3.5 Queue Worker
 
-```yaml
-Name: codexflow-queue
-Build: Same as app
+```
+Service Type: App → Git (aynı repo)
+Name: queue
+Dockerfile: Dockerfile
 Command: php artisan queue:work --tries=3 --timeout=90
+
+Environment Variables: (app ile aynı)
 ```
 
-### 6. Laravel Scheduler
+### 3.6 Scheduler
 
-```yaml
-Name: codexflow-scheduler
-Build: Same as app
-Command: sh -c "while true; do php artisan schedule:run; sleep 60; done"
+```
+Service Type: App → Git (aynı repo)
+Name: scheduler
+Dockerfile: Dockerfile
+Command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction & sleep 60; done"
+
+Environment Variables: (app ile aynı)
 ```
 
-## Environment Variables
+---
 
-All required environment variables are documented in `env.example`.
+## 📦 ADIM 4: Domain & SSL
 
-### Critical Variables
+1. `app` servisine git → **Domains**
+2. **Add Domain**: `api.codexflow.dev`
+3. **Enable HTTPS**: ✅
+4. **Force HTTPS**: ✅
+5. Let's Encrypt otomatik SSL alacak
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `LITELLM_MASTER_KEY` | Auth key for LiteLLM proxy | ✅ |
-| `ANTHROPIC_KEY_ORG_A/B/C` | 3 Anthropic org keys | ✅ |
-| `OPENAI_API_KEY_PLANNER` | OpenAI for decompose | ✅ |
-| `OPENAI_API_KEY_GRACE` | OpenAI for grace fallback | ✅ |
-| `OPENROUTER_API_KEY` | Llama 405B FREE | ✅ |
-| `DB_PASSWORD` | MySQL password | ✅ |
-| `REDIS_PASSWORD` | Redis password | ✅ |
+---
 
-## SSL Setup
+## 📦 ADIM 5: İlk Kurulum Komutları
 
-1. Enable Let's Encrypt in EasyPanel
-2. Add domain: `api.codexflow.dev`
-3. Force HTTPS redirect
-
-## Post-Deployment
+EasyPanel'de `app` servisinin **Terminal** sekmesine git:
 
 ```bash
-# Run migrations
-docker exec codexflow-app php artisan migrate --force
+# 1. App key oluştur
+php artisan key:generate --force
 
-# Generate app key
-docker exec codexflow-app php artisan key:generate
+# 2. Migration çalıştır
+php artisan migrate --force
 
-# Clear cache
-docker exec codexflow-app php artisan config:cache
-docker exec codexflow-app php artisan route:cache
+# 3. Cache temizle
+php artisan config:cache
+php artisan route:cache
+php artisan view:cache
 
-# Create admin user
-docker exec -it codexflow-app php artisan tinker
->>> User::create(['name'=>'Admin','email'=>'admin@codexflow.dev','password'=>bcrypt('password'),'role'=>'admin','status'=>'active']);
+# 4. Storage link oluştur
+php artisan storage:link
 ```
 
-## Monitoring
+---
 
-### Health Checks
+## 📦 ADIM 6: Admin Kullanıcı Oluştur
 
-- Laravel: `GET /api/health`
-- LiteLLM: `GET :4000/health`
-
-### Logs
+Terminal'de:
 
 ```bash
-# Laravel logs
-docker logs codexflow-app -f
-
-# LiteLLM logs
-docker logs codexflow-litellm -f
-
-# Queue worker logs
-docker logs codexflow-queue -f
+php artisan tinker
 ```
 
-### Alerts (Telegram Bot)
+Tinker içinde:
 
-Configure Telegram bot for:
-- Error rate > 10%
-- Response time > 5s
-- Queue backup > 100 jobs
-- Disk usage > 80%
+```php
+App\Models\User::create([
+    'name' => 'Admin',
+    'email' => 'admin@codexflow.dev',
+    'password' => bcrypt('GucluSifre123!'),
+    'role' => 'admin',
+    'status' => 'active',
+    'email_verified_at' => now(),
+]);
+```
 
-## Backup
+CTRL+D ile çık.
+
+---
+
+## ✅ ADIM 7: Test Et
+
+### LiteLLM Health Check
 
 ```bash
-# Database backup
-docker exec codexflow-db mysqldump -u codexflow -p codexflow > backup.sql
-
-# Redis backup (optional - mostly cache)
-docker exec codexflow-redis redis-cli BGSAVE
+curl http://litellm:4000/health
 ```
 
-## Scaling
+Beklenen: `{"status":"healthy"}`
 
-For more than 50 users:
+### Laravel Health Check
 
-1. Upgrade to OVH KS8 or similar
-2. Add read replica for MySQL
-3. Consider Redis Cluster
-4. Add second app instance behind load balancer
+```bash
+curl https://api.codexflow.dev/api/health
+```
 
+### LiteLLM Model Test
+
+```bash
+curl -X POST http://litellm:4000/v1/chat/completions \
+  -H "Authorization: Bearer sk-codexflow-master-key-DEGISTIR" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "cf-fast",
+    "messages": [{"role": "user", "content": "Say hello"}]
+  }'
+```
+
+---
+
+## 🔧 SORUN GİDERME
+
+### Log Kontrol
+
+```bash
+# App logları
+docker logs codexflow-app -f --tail 100
+
+# LiteLLM logları
+docker logs codexflow-litellm -f --tail 100
+
+# Queue logları
+docker logs codexflow-queue -f --tail 100
+
+# MySQL logları
+docker logs codexflow-mysql -f --tail 100
+```
+
+### Yaygın Hatalar
+
+| Hata | Çözüm |
+|------|-------|
+| `SQLSTATE[HY000] Connection refused` | MySQL container'ı başlamadı, bekle veya restart |
+| `Redis connection refused` | Redis container'ı kontrol et |
+| `401 Unauthorized` (LiteLLM) | LITELLM_MASTER_KEY doğru mu? |
+| `API key invalid` (Anthropic) | ANTHROPIC_KEY_ORG_A doğru mu? |
+
+### Container Restart
+
+```bash
+# Tek servis
+docker restart codexflow-app
+
+# Tüm servisler
+cd /etc/easypanel/projects/codexflow/
+docker-compose down
+docker-compose up -d
+```
+
+---
+
+## 📊 İZLEME & MONITORING
+
+### Günlük Kontroller
+
+1. **LiteLLM Health**: `http://litellm:4000/health/liveliness`
+2. **Redis**: `docker exec codexflow-redis redis-cli ping`
+3. **MySQL**: `docker exec codexflow-mysql mysqladmin ping`
+
+### Disk Kullanımı
+
+```bash
+df -h
+docker system df
+```
+
+### Log Boyutları
+
+```bash
+du -sh /var/lib/docker/containers/*
+```
+
+---
+
+## 💾 BACKUP
+
+### Günlük MySQL Backup
+
+```bash
+# Manuel backup
+docker exec codexflow-mysql mysqldump -u codexflow -p codexflow > backup_$(date +%Y%m%d).sql
+
+# Sıkıştırılmış
+docker exec codexflow-mysql mysqldump -u codexflow -p codexflow | gzip > backup_$(date +%Y%m%d).sql.gz
+```
+
+### Otomatik Backup (Cron)
+
+```bash
+# /etc/cron.daily/codexflow-backup
+#!/bin/bash
+docker exec codexflow-mysql mysqldump -u codexflow -pSIFRE codexflow | gzip > /backups/codexflow_$(date +%Y%m%d).sql.gz
+find /backups -name "*.sql.gz" -mtime +7 -delete
+```
+
+---
+
+## 📈 ÖLÇEKLENDİRME
+
+### 50+ Kullanıcı İçin
+
+| Bileşen | Öneri |
+|---------|-------|
+| Server | OVH KS8'e upgrade |
+| MySQL | Read replica ekle |
+| Redis | Redis Cluster |
+| App | 2. instance + load balancer |
+
+---
+
+## 🎯 HIZLI BAŞVURU
+
+### Servis Durumları
+
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+
+### Beklenen Çıktı
+
+```
+NAMES                STATUS          PORTS
+codexflow-app        Up 2 hours      0.0.0.0:8000->8000/tcp
+codexflow-litellm    Up 2 hours      0.0.0.0:4000->4000/tcp
+codexflow-mysql      Up 2 hours      3306/tcp
+codexflow-redis      Up 2 hours      6379/tcp
+codexflow-queue      Up 2 hours      
+codexflow-scheduler  Up 2 hours      
+```
+
+### Hızlı Debug
+
+```bash
+# Tüm logları gör
+docker-compose logs -f
+
+# Son 50 satır
+docker-compose logs --tail 50
+
+# Sadece hatalar
+docker-compose logs | grep -i error
+```
+
+---
+
+## ✨ DEPLOY TAMAMLANDI!
+
+Başarılı deploy sonrası:
+
+- 🌐 **API**: https://api.codexflow.dev
+- 🔧 **LiteLLM**: http://localhost:4000 (internal)
+- 👤 **Admin**: admin@codexflow.dev
+- 📊 **Dashboard**: https://api.codexflow.dev/admin
+
+---
+
+*CodexFlow.dev - EasyPanel Deploy Guide v2.0*
