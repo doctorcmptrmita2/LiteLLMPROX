@@ -101,14 +101,14 @@ model_list:
       tpm: 30000
 
   # =========================
-  # PLANNER (GPT-4o-mini)
+  # PLANNER (GPT-4o-mini via OpenRouter)
   # Purpose: Decompose pipeline - JSON plan generation
   # Cost: $0.15/1M input, $0.60/1M output
   # =========================
   - model_name: cf-planner
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY_PLANNER
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
       timeout: 30
       rpm: 500
       tpm: 100000
@@ -128,14 +128,14 @@ model_list:
       tpm: 100000
 
   # =========================
-  # GRACE LANE FALLBACK (GPT-4o-mini)
+  # GRACE LANE FALLBACK (GPT-4o-mini via OpenRouter)
   # Purpose: If Llama fails, use this
   # Cost: $0.15/1M input, $0.60/1M output
   # =========================
   - model_name: cf-grace-fallback
     litellm_params:
-      model: openai/gpt-4o-mini
-      api_key: os.environ/OPENAI_API_KEY_GRACE
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
       timeout: 60
       rpm: 500
       tpm: 200000
@@ -196,8 +196,8 @@ general_settings:
   # Master key for proxy authentication
   master_key: os.environ/LITELLM_MASTER_KEY
   
-  # Database for LiteLLM (optional - for virtual keys, spend tracking)
-  database_url: os.environ/DATABASE_URL
+  # Database DISABLED - We handle user/quota management in Laravel
+  # database_url: os.environ/DATABASE_URL
 
 # =============================================================================
 # ENVIRONMENT VARIABLES REQUIRED:
