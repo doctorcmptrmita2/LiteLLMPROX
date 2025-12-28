@@ -1,8 +1,11 @@
 # =============================================================================
 # CODEXFLOW.DEV - LiteLLM Proxy Configuration
-# Version: 2.0 (Decompose Pipeline + Grace Lane)
-# Date: 27 Aralık 2025
+# Version: 2.1 (Stateless Mode)
 # =============================================================================
+#
+# IMPORTANT: LiteLLM runs in STATELESS mode (no database).
+# All user management, quota tracking, and usage logging is handled by Laravel.
+# LiteLLM is just a smart proxy that routes requests to the right LLM provider.
 #
 # ALIAS STRATEGY:
 # - cf-fast    → Claude Haiku 3.5 (3 org key pool) - Quick tasks
@@ -44,10 +47,9 @@ model_list:
       tpm: 50000
 
   # =========================
-  # DEEP POOL (Claude Sonnet 4 + Opus 4.5) x3 org keys
+  # DEEP POOL (Claude Sonnet 4) x3 org keys
   # Purpose: Complex logic, architecture decisions
-  # Cost: $3.00/1M input, $15.00/1M output (Sonnet 4)
-  #       $15.00/1M input, $75.00/1M output (Opus 4.5)
+  # Cost: $3.00/1M input, $15.00/1M output
   # =========================
   - model_name: cf-deep
     litellm_params:
@@ -72,17 +74,6 @@ model_list:
       timeout: 120
       rpm: 60
       tpm: 30000
-
-  # Opus 4.5 support (if available via Anthropic API)
-  # Note: Opus 4.5 may use different model identifier
-  # Uncomment and adjust model name when Opus 4.5 is available
-  # - model_name: cf-deep
-  #   litellm_params:
-  #     model: anthropic/claude-opus-4-20250514
-  #     api_key: os.environ/ANTHROPIC_KEY_ORG_A
-  #     timeout: 180
-  #     rpm: 30
-  #     tpm: 20000
 
   # =========================
   # DEEP FALLBACK (Claude Sonnet 3.5) x3 org keys
@@ -124,7 +115,7 @@ model_list:
       timeout: 30
       rpm: 500
       tpm: 100000
-      max_tokens: 500  # Only JSON output, keep it small
+      max_tokens: 500
 
   # =========================
   # GRACE LANE PRIMARY (Llama 3.1 405B FREE via OpenRouter)
@@ -135,7 +126,7 @@ model_list:
     litellm_params:
       model: openrouter/meta-llama/llama-3.1-405b-instruct:free
       api_key: os.environ/OPENROUTER_API_KEY
-      timeout: 90  # Longer timeout for free tier
+      timeout: 90
       rpm: 20
       tpm: 100000
 
@@ -159,21 +150,13 @@ router_settings:
   # Routing strategy: usage-based for better load distribution
   routing_strategy: usage-based-routing
   
-  # Pre-call health check
-  enable_pre_call_check: true
-  
   # Retry settings
   num_retries: 2
   timeout: 140
   
   # Cooldown for failing deployments
-  allowed_fails: 3           # Mark unhealthy after 3 consecutive fails
-  cooldown_time: 60          # 60 seconds cooldown
-  
-  # Redis for state management (multi-instance support)
-  redis_host: os.environ/REDIS_HOST
-  redis_port: os.environ/REDIS_PORT
-  redis_password: os.environ/REDIS_PASSWORD
+  allowed_fails: 3
+  cooldown_time: 60
 
 # =============================================================================
 # LITELLM SETTINGS
@@ -183,49 +166,32 @@ litellm_settings:
   num_retries: 2
   request_timeout: 140
   
-  # Fallback chains (LiteLLM internal)
+  # Fallback chains
   fallbacks:
-    - cf-deep: [cf-deep-fallback]      # Deep → Deep fallback
-    - cf-grace: [cf-grace-fallback]    # Llama FREE → GPT-4o-mini
+    - cf-deep: [cf-deep-fallback]
+    - cf-grace: [cf-grace-fallback]
   
-  # Cache settings (for deterministic requests)
-  cache: true
-  cache_params:
-    type: redis
-    host: os.environ/REDIS_HOST
-    port: os.environ/REDIS_PORT
-    password: os.environ/REDIS_PASSWORD
-    ttl: 3600  # 1 hour cache
-
-  # Logging (optional - enable in production)
-  # success_callback: ["langfuse"]
-  # failure_callback: ["langfuse"]
+  # Drop params that provider doesn't support
+  drop_params: true
 
 # =============================================================================
-# GENERAL SETTINGS
+# GENERAL SETTINGS (Stateless Mode)
 # =============================================================================
 general_settings:
   # Master key for proxy authentication
   master_key: os.environ/LITELLM_MASTER_KEY
   
-  # Database DISABLED - Laravel handles all user/quota management
-  # LiteLLM runs in stateless mode (no internal DB needed)
+  # STATELESS MODE - No database required
+  # Laravel handles all user/quota management
+  store_model_in_db: false
+  disable_spend_logs: true
 
 # =============================================================================
 # ENVIRONMENT VARIABLES REQUIRED:
 # =============================================================================
 # ANTHROPIC_KEY_ORG_A     - Anthropic API key (org A)
-# ANTHROPIC_KEY_ORG_B     - Anthropic API key (org B)
+# ANTHROPIC_KEY_ORG_B     - Anthropic API key (org B)  
 # ANTHROPIC_KEY_ORG_C     - Anthropic API key (org C)
-# OPENAI_API_KEY_PLANNER  - OpenAI key for planner
-# OPENAI_API_KEY_GRACE    - OpenAI key for grace fallback
-# OPENROUTER_API_KEY      - OpenRouter key for Llama FREE
-# REDIS_HOST              - Redis host
-# REDIS_PORT              - Redis port (default: 6379)
-# REDIS_PASSWORD          - Redis password
+# OPENROUTER_API_KEY      - OpenRouter key (Llama FREE + GPT-4o-mini)
 # LITELLM_MASTER_KEY      - Master key for proxy auth
-# LITELLM_DATABASE_URL    - Database URL for LiteLLM internal tracking
-#                           SQLite: sqlite:///./litellm.db
-#                           PostgreSQL: postgresql://user:pass@host:port/db
 # =============================================================================
-
