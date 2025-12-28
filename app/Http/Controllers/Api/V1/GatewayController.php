@@ -103,8 +103,8 @@ class GatewayController extends Controller
         // Check for decompose trigger
         $forceDecompose = $request->header('x-decompose') === '1';
 
-        // Check if streaming requested
-        $isStreaming = $payload['stream'] ?? false;
+        // Streaming temporarily disabled - use non-streaming for stability
+        $isStreaming = false; // $payload['stream'] ?? false;
 
         try {
             if ($isStreaming) {
@@ -160,6 +160,11 @@ class GatewayController extends Controller
         ?string $requestedTier
     ): StreamedResponse {
         return response()->stream(function () use ($payload, $user, $project, $apiKey, $planConfig, $requestId, $requestedTier) {
+            // Disable output buffering for streaming
+            while (ob_get_level() > 0) {
+                ob_end_flush();
+            }
+            
             try {
                 foreach ($this->gatewayService->chatCompletionStream(
                     payload: $payload,
@@ -171,11 +176,9 @@ class GatewayController extends Controller
                     requestedTier: $requestedTier
                 ) as $chunk) {
                     // Final safety check: Don't send error chunks directly to client
-                    // LiteLLM can send error chunks in stream format: { "error": "ERROR_XXX", "details": {...} }
                     if (isset($chunk['error']) || isset($chunk['details'])) {
                         $errorType = is_string($chunk['error'] ?? null) ? $chunk['error'] : null;
                         
-                        // If it's a LiteLLM error format (ERROR_OPENAI, etc.), throw exception
                         if ($errorType && str_starts_with($errorType, 'ERROR_')) {
                             $errorMessage = $chunk['details']['title'] ?? $chunk['details']['detail'] ?? 'Provider error';
                             throw new \App\Exceptions\Llm\ProviderException($errorMessage, 502);
@@ -183,16 +186,13 @@ class GatewayController extends Controller
                     }
                     
                     echo "data: " . json_encode($chunk) . "\n\n";
-                    ob_flush();
                     flush();
                 }
 
                 echo "data: [DONE]\n\n";
-                ob_flush();
                 flush();
 
             } catch (LlmException $e) {
-                // Send error in OpenAI-compatible format
                 echo "data: " . json_encode([
                     'error' => [
                         'message' => $e->getMessage(),
@@ -201,10 +201,8 @@ class GatewayController extends Controller
                     ],
                     'isExpected' => true,
                 ]) . "\n\n";
-                ob_flush();
                 flush();
             } catch (\Exception $e) {
-                // Catch any unexpected errors
                 \Illuminate\Support\Facades\Log::error('Unexpected streaming error', [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
@@ -218,12 +216,12 @@ class GatewayController extends Controller
                     ],
                     'isExpected' => false,
                 ]) . "\n\n";
-                ob_flush();
                 flush();
             }
         }, 200, [
             'Content-Type' => 'text/event-stream',
             'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
             'X-Request-Id' => $requestId,
         ]);
