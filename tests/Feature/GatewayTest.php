@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\ProjectApiKey;
 use App\Models\Subscription;
 use App\Models\User;
+use App\Services\Llm\QuotaService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
@@ -56,6 +57,16 @@ class GatewayTest extends TestCase
             'key_prefix' => $keyData['prefix'],
             'key_hash' => $keyData['hash'],
         ]);
+
+        // Initialize quota for testing
+        $subscription = $this->user->activeSubscription;
+        if ($subscription) {
+            $planConfig = $subscription->getPlanConfig();
+            if ($planConfig) {
+                $quotaService = app(QuotaService::class);
+                $quotaService->initializeQuota($this->user, $planConfig);
+            }
+        }
     }
 
     /** @test */
@@ -109,26 +120,30 @@ class GatewayTest extends TestCase
     public function it_processes_valid_fast_request()
     {
         // Mock LiteLLM response
-        Http::fake([
-            '*/v1/chat/completions' => Http::response([
-                'id' => 'chatcmpl-123',
-                'object' => 'chat.completion',
-                'created' => time(),
-                'model' => 'cf-fast',
-                'choices' => [
-                    [
-                        'index' => 0,
-                        'message' => ['role' => 'assistant', 'content' => 'Hello!'],
-                        'finish_reason' => 'stop',
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/v1/chat/completions')) {
+                return Http::response([
+                    'id' => 'chatcmpl-123',
+                    'object' => 'chat.completion',
+                    'created' => time(),
+                    'model' => 'cf-fast',
+                    'choices' => [
+                        [
+                            'index' => 0,
+                            'message' => ['role' => 'assistant', 'content' => 'Hello!'],
+                            'finish_reason' => 'stop',
+                        ],
                     ],
-                ],
-                'usage' => [
-                    'prompt_tokens' => 10,
-                    'completion_tokens' => 5,
-                    'total_tokens' => 15,
-                ],
-            ]),
-        ]);
+                    'usage' => [
+                        'prompt_tokens' => 10,
+                        'completion_tokens' => 5,
+                        'total_tokens' => 15,
+                    ],
+                ], 200);
+            }
+            // Default response for any other request
+            return Http::response(['error' => 'Not found'], 404);
+        });
 
         $response = $this->postJson('/api/v1/chat/completions', [
             'messages' => [['role' => 'user', 'content' => 'Hello']],
@@ -147,17 +162,21 @@ class GatewayTest extends TestCase
     /** @test */
     public function it_uses_deep_tier_with_x_quality_header()
     {
-        Http::fake([
-            '*/v1/chat/completions' => Http::response([
-                'id' => 'chatcmpl-123',
-                'object' => 'chat.completion',
-                'model' => 'cf-deep',
-                'choices' => [
-                    ['index' => 0, 'message' => ['role' => 'assistant', 'content' => 'Deep response']],
-                ],
-                'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5, 'total_tokens' => 15],
-            ]),
-        ]);
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/v1/chat/completions')) {
+                return Http::response([
+                    'id' => 'chatcmpl-123',
+                    'object' => 'chat.completion',
+                    'model' => 'cf-deep',
+                    'choices' => [
+                        ['index' => 0, 'message' => ['role' => 'assistant', 'content' => 'Deep response']],
+                    ],
+                    'usage' => ['prompt_tokens' => 10, 'completion_tokens' => 5, 'total_tokens' => 15],
+                ], 200);
+            }
+            // Default response for any other request
+            return Http::response(['error' => 'Not found'], 404);
+        });
 
         $response = $this->postJson('/api/v1/chat/completions', [
             'messages' => [['role' => 'user', 'content' => 'Complex task']],
@@ -186,13 +205,17 @@ class GatewayTest extends TestCase
     /** @test */
     public function it_includes_request_id_in_response()
     {
-        Http::fake([
-            '*/v1/chat/completions' => Http::response([
-                'id' => 'chatcmpl-123',
-                'choices' => [['message' => ['content' => 'Hi']]],
-                'usage' => ['total_tokens' => 10],
-            ]),
-        ]);
+        Http::fake(function ($request) {
+            if (str_contains($request->url(), '/v1/chat/completions')) {
+                return Http::response([
+                    'id' => 'chatcmpl-123',
+                    'choices' => [['message' => ['content' => 'Hi']]],
+                    'usage' => ['total_tokens' => 10],
+                ], 200);
+            }
+            // Default response for any other request
+            return Http::response(['error' => 'Not found'], 404);
+        });
 
         $response = $this->postJson('/api/v1/chat/completions', [
             'messages' => [['role' => 'user', 'content' => 'Hello']],

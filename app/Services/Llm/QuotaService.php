@@ -6,6 +6,7 @@ use App\Exceptions\Llm\QuotaExceededException;
 use App\Models\QuotaDaily;
 use App\Models\QuotaMonthly;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 
 class QuotaService
@@ -32,24 +33,29 @@ class QuotaService
 
         // Try to decrement monthly and daily atomically
         try {
-            $remaining = Redis::decrby($monthlyKey, $estimatedTokens);
+            if ($this->isRedisAvailable()) {
+                $remaining = Redis::decrby($monthlyKey, $estimatedTokens);
 
-            if ($remaining < 0) {
-                // Rollback
-                Redis::incrby($monthlyKey, $estimatedTokens);
-                return false;
+                if ($remaining < 0) {
+                    // Rollback
+                    Redis::incrby($monthlyKey, $estimatedTokens);
+                    return false;
+                }
+
+                // Also check daily
+                $dailyRemaining = Redis::decrby($dailyKey, $estimatedTokens);
+                if ($dailyRemaining < 0) {
+                    // Rollback both
+                    Redis::incrby($dailyKey, $estimatedTokens);
+                    Redis::incrby($monthlyKey, $estimatedTokens);
+                    return false;
+                }
+
+                return true;
+            } else {
+                // Use cache-based quota for testing
+                return $this->preAuthorizeWithCache($monthlyKey, $dailyKey, $estimatedTokens);
             }
-
-            // Also check daily
-            $dailyRemaining = Redis::decrby($dailyKey, $estimatedTokens);
-            if ($dailyRemaining < 0) {
-                // Rollback both
-                Redis::incrby($dailyKey, $estimatedTokens);
-                Redis::incrby($monthlyKey, $estimatedTokens);
-                return false;
-            }
-
-            return true;
 
         } catch (\Exception $e) {
             // If Redis fails, fall back to DB check (less safe but functional)
@@ -63,14 +69,27 @@ class QuotaService
     protected function preAuthorizeDailyOnly(User $user, string $dailyKey, int $estimatedTokens): bool
     {
         try {
-            $remaining = Redis::decrby($dailyKey, $estimatedTokens);
+            if ($this->isRedisAvailable()) {
+                $remaining = Redis::decrby($dailyKey, $estimatedTokens);
 
-            if ($remaining < 0) {
-                Redis::incrby($dailyKey, $estimatedTokens);
-                return false;
+                if ($remaining < 0) {
+                    Redis::incrby($dailyKey, $estimatedTokens);
+                    return false;
+                }
+
+                return true;
+            } else {
+                // Use cache for testing
+                $current = Cache::get($dailyKey, PHP_INT_MAX);
+                $remaining = $current - $estimatedTokens;
+                
+                if ($remaining < 0) {
+                    return false;
+                }
+                
+                Cache::put($dailyKey, $remaining, now()->endOfDay());
+                return true;
             }
-
-            return true;
         } catch (\Exception $e) {
             return true; // Grace lane is FREE, allow on Redis failure
         }
@@ -94,9 +113,14 @@ class QuotaService
         $dailyKey = "{$this->redisPrefix}daily:{$user->id}:{$date}:{$tier}";
 
         try {
-            // Adjust Redis (negative delta means we used less, so increment)
-            Redis::decrby($monthlyKey, $delta);
-            Redis::decrby($dailyKey, $delta);
+            if ($this->isRedisAvailable()) {
+                // Adjust Redis (negative delta means we used less, so increment)
+                Redis::decrby($monthlyKey, $delta);
+                Redis::decrby($dailyKey, $delta);
+            } else {
+                // Use cache for testing
+                $this->adjustCacheQuota($monthlyKey, $dailyKey, $delta);
+            }
         } catch (\Exception $e) {
             // Log but don't fail - will sync via job later
         }
@@ -157,22 +181,38 @@ class QuotaService
             if (isset($monthlyQuotas[$tier])) {
                 $limit = $monthlyQuotas[$tier]['input_tokens'] + $monthlyQuotas[$tier]['output_tokens'];
                 $key = "{$this->redisPrefix}monthly:{$user->id}:{$month}:{$tier}";
-                Redis::setnx($key, $limit);
-                Redis::expire($key, 35 * 24 * 3600); // 35 days
+                
+                if ($this->isRedisAvailable()) {
+                    Redis::setnx($key, $limit);
+                    Redis::expire($key, 35 * 24 * 3600); // 35 days
+                } else {
+                    Cache::put($key, $limit, now()->addDays(35));
+                }
             }
 
             if (isset($dailySafety[$tier])) {
                 $key = "{$this->redisPrefix}daily:{$user->id}:{$date}:{$tier}";
-                Redis::setnx($key, $dailySafety[$tier]['tokens']);
-                Redis::expireat($key, now()->endOfDay()->timestamp + 1);
+                
+                if ($this->isRedisAvailable()) {
+                    Redis::setnx($key, $dailySafety[$tier]['tokens']);
+                    Redis::expireat($key, now()->endOfDay()->timestamp + 1);
+                } else {
+                    Cache::put($key, $dailySafety[$tier]['tokens'], now()->endOfDay());
+                }
             }
         }
 
         // Grace daily
         if ($graceDaily) {
             $key = "{$this->redisPrefix}daily:{$user->id}:{$date}:grace";
-            Redis::setnx($key, $graceDaily['tokens'] ?? PHP_INT_MAX);
-            Redis::expireat($key, now()->endOfDay()->timestamp + 1);
+            $limit = $graceDaily['tokens'] ?? PHP_INT_MAX;
+            
+            if ($this->isRedisAvailable()) {
+                Redis::setnx($key, $limit);
+                Redis::expireat($key, now()->endOfDay()->timestamp + 1);
+            } else {
+                Cache::put($key, $limit, now()->endOfDay());
+            }
         }
     }
 
@@ -200,6 +240,49 @@ class QuotaService
 
         // Rough estimation: ~4 chars per token
         return (int) ceil(strlen($text) / 4);
+    }
+
+    /**
+     * Check if Redis is available.
+     */
+    protected function isRedisAvailable(): bool
+    {
+        return config('cache.default') === 'redis' 
+            && class_exists('Redis') 
+            && config('database.redis.client') !== 'array';
+    }
+
+    /**
+     * Pre-authorize using Cache (for testing).
+     */
+    protected function preAuthorizeWithCache(string $monthlyKey, string $dailyKey, int $estimatedTokens): bool
+    {
+        $monthlyCurrent = Cache::get($monthlyKey, PHP_INT_MAX);
+        $dailyCurrent = Cache::get($dailyKey, PHP_INT_MAX);
+
+        $monthlyRemaining = $monthlyCurrent - $estimatedTokens;
+        $dailyRemaining = $dailyCurrent - $estimatedTokens;
+
+        if ($monthlyRemaining < 0 || $dailyRemaining < 0) {
+            return false;
+        }
+
+        Cache::put($monthlyKey, $monthlyRemaining, now()->addDays(35));
+        Cache::put($dailyKey, $dailyRemaining, now()->endOfDay());
+
+        return true;
+    }
+
+    /**
+     * Adjust quota using Cache (for testing).
+     */
+    protected function adjustCacheQuota(string $monthlyKey, string $dailyKey, int $delta): void
+    {
+        $monthlyCurrent = Cache::get($monthlyKey, PHP_INT_MAX);
+        $dailyCurrent = Cache::get($dailyKey, PHP_INT_MAX);
+
+        Cache::put($monthlyKey, $monthlyCurrent - $delta, now()->addDays(35));
+        Cache::put($dailyKey, $dailyCurrent - $delta, now()->endOfDay());
     }
 }
 

@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Redis;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -59,26 +60,37 @@ class RateLimitMiddleware
     }
 
     /**
-     * Check rate limit using Redis sliding window.
+     * Check rate limit using Redis sliding window or Cache fallback.
      */
     protected function checkLimit(string $key, int $limit, int $windowSeconds): array
     {
         $now = time();
         $windowStart = $now - $windowSeconds;
 
-        // Use Redis transaction for atomic operations
-        $result = Redis::pipeline(function ($pipe) use ($key, $now, $windowStart, $windowSeconds) {
-            // Remove old entries
-            $pipe->zremrangebyscore($key, '-inf', $windowStart);
-            // Add current request
-            $pipe->zadd($key, $now, $now . ':' . uniqid());
-            // Count requests in window
-            $pipe->zcard($key);
-            // Set expiry
-            $pipe->expire($key, $windowSeconds + 1);
-        });
+        // Use Redis if available, otherwise fallback to Cache
+        if (config('cache.default') === 'redis' && class_exists('Redis')) {
+            try {
+                $result = Redis::pipeline(function ($pipe) use ($key, $now, $windowStart, $windowSeconds) {
+                    // Remove old entries
+                    $pipe->zremrangebyscore($key, '-inf', $windowStart);
+                    // Add current request
+                    $pipe->zadd($key, $now, $now . ':' . uniqid());
+                    // Count requests in window
+                    $pipe->zcard($key);
+                    // Set expiry
+                    $pipe->expire($key, $windowSeconds + 1);
+                });
 
-        $count = $result[2] ?? 0;
+                $count = $result[2] ?? 0;
+            } catch (\Exception $e) {
+                // Fallback to cache if Redis fails
+                $count = $this->checkLimitWithCache($key, $limit, $windowSeconds);
+            }
+        } else {
+            // Use cache-based rate limiting for testing
+            $count = $this->checkLimitWithCache($key, $limit, $windowSeconds);
+        }
+
         $remaining = $limit - $count;
         $resetAt = $now + $windowSeconds;
 
@@ -88,6 +100,29 @@ class RateLimitMiddleware
             'reset_at' => $resetAt,
             'retry_after' => $remaining < 0 ? $windowSeconds : 0,
         ];
+    }
+
+    /**
+     * Fallback rate limiting using Cache (for testing).
+     */
+    protected function checkLimitWithCache(string $key, int $limit, int $windowSeconds): int
+    {
+        $now = time();
+        $windowStart = $now - $windowSeconds;
+        
+        // Get existing requests from cache
+        $requests = Cache::get($key, []);
+        
+        // Filter out old requests
+        $requests = array_filter($requests, fn($timestamp) => $timestamp >= $windowStart);
+        
+        // Add current request
+        $requests[] = $now;
+        
+        // Store back to cache
+        Cache::put($key, $requests, $windowSeconds + 1);
+        
+        return count($requests);
     }
 
     /**

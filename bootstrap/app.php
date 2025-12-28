@@ -12,9 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
         then: function () {
-            // Gateway routes without /api prefix (OpenAI-compatible for Cursor)
-            Route::middleware('api')
-                ->group(base_path('routes/gateway.php'));
+            // Gateway routes without /api prefix (OpenAI-compatible for Cursor/VS Code)
+            // These routes are accessible at /v1/... directly (not /api/v1/...)
+            Route::group([], base_path('routes/gateway.php'));
             
             // Test routes (no middleware)
             Route::group([], base_path('routes/test.php'));

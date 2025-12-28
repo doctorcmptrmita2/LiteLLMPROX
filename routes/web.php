@@ -22,6 +22,17 @@ Route::get('/register', function () {
     return view('auth.register');
 })->name('register');
 
+// Email verification routes
+Route::get('/email/verify/{id}/{hash}', function (\Illuminate\Foundation\Auth\EmailVerificationRequest $request) {
+    $request->fulfill();
+    return redirect('/app?verified=1');
+})->middleware(['auth:sanctum', 'signed'])->name('verification.verify');
+
+Route::post('/email/verification-notification', function (\Illuminate\Http\Request $request) {
+    $request->user()->sendEmailVerificationNotification();
+    return back()->with('message', 'Verification link sent!');
+})->middleware(['auth:sanctum', 'throttle:6,1'])->name('verification.send');
+
 /*
 |--------------------------------------------------------------------------
 | Customer Dashboard Routes
