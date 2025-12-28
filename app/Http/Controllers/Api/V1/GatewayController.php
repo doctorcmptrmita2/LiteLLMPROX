@@ -20,10 +20,65 @@ class GatewayController extends Controller
      */
     public function chatCompletions(Request $request): JsonResponse|StreamedResponse
     {
+        // Custom validation for OpenAI-compatible message format
         $payload = $request->validate([
             'messages' => 'required|array|min:1',
-            'messages.*.role' => 'required|in:system,user,assistant',
-            'messages.*.content' => 'required',
+            'messages.*.role' => [
+                'required',
+                'string',
+                function ($attribute, $value, $fail) {
+                    $allowedRoles = ['system', 'user', 'assistant', 'tool', 'function'];
+                    if (!in_array($value, $allowedRoles)) {
+                        $fail("The {$attribute} must be one of: " . implode(', ', $allowedRoles));
+                    }
+                },
+            ],
+            'messages.*.content' => [
+                'nullable',
+                function ($attribute, $value, $fail) use ($request) {
+                    // Get the message index from attribute (e.g., "messages.5.content" -> 5)
+                    preg_match('/messages\.(\d+)\.content/', $attribute, $matches);
+                    $index = $matches[1] ?? null;
+                    
+                    if ($index !== null) {
+                        $messages = $request->input('messages', []);
+                        $message = $messages[$index] ?? null;
+                        $role = $message['role'] ?? null;
+                        
+                        // Content is required for system and user roles
+                        if (in_array($role, ['system', 'user']) && (empty($value) && $value !== '0')) {
+                            $fail("The {$attribute} field is required when role is {$role}.");
+                        }
+                        
+                        // Content is optional for assistant if tool_calls exists
+                        // Content is optional for tool role (tool_call_id is required instead)
+                        // Content can be null for assistant with tool_calls
+                    }
+                },
+            ],
+            'messages.*.tool_calls' => 'sometimes|array',
+            'messages.*.tool_call_id' => [
+                'sometimes',
+                'nullable',
+                'string',
+                function ($attribute, $value, $fail) use ($request) {
+                    preg_match('/messages\.(\d+)\.tool_call_id/', $attribute, $matches);
+                    $index = $matches[1] ?? null;
+                    
+                    if ($index !== null) {
+                        $messages = $request->input('messages', []);
+                        $message = $messages[$index] ?? null;
+                        $role = $message['role'] ?? null;
+                        
+                        // tool_call_id is required for tool role
+                        if ($role === 'tool' && empty($value)) {
+                            $fail("The {$attribute} field is required when role is tool.");
+                        }
+                    }
+                },
+            ],
+            'messages.*.name' => 'sometimes|string', // For function role
+            'messages.*.function' => 'sometimes|array', // For function role (legacy)
             'model' => 'sometimes|string',
             'max_tokens' => 'sometimes|integer|min:1|max:4096',
             'temperature' => 'sometimes|numeric|min:0|max:2',
