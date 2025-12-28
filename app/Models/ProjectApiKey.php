@@ -12,7 +12,8 @@ class ProjectApiKey extends Model
 {
     use HasFactory;
 
-    public $timestamps = false;
+    // Enable only created_at, not updated_at
+    const UPDATED_AT = null;
 
     protected $fillable = [
         'project_id',

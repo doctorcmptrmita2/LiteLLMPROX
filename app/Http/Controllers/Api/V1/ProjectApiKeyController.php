@@ -76,13 +76,16 @@ class ProjectApiKeyController extends Controller
             'key_hash' => $keyData['hash'],
         ]);
 
+        // Refresh to get created_at
+        $apiKey->refresh();
+
         return response()->json([
             'message' => 'API key created successfully. Store this key securely - it will not be shown again.',
             'data' => [
                 'id' => $apiKey->id,
                 'name' => $apiKey->name,
                 'key' => $keyData['plaintext'], // ONLY shown once!
-                'created_at' => $apiKey->created_at->toIso8601String(),
+                'created_at' => $apiKey->created_at?->toIso8601String() ?? now()->toIso8601String(),
             ],
         ], 201);
     }
