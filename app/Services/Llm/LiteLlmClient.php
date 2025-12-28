@@ -131,17 +131,63 @@ class LiteLlmClient
                 ->withOptions(['stream' => true])
                 ->post($endpoint, $payload);
 
+            // Check if response is successful
             if (!$response->successful()) {
+                // Try to parse error from body even if response failed
+                $body = $response->body();
+                
+                // If body is not empty, try to parse as JSON
+                if (!empty($body)) {
+                    $errorBody = json_decode($body, true);
+                    if ($errorBody && (isset($errorBody['error']) || isset($errorBody['details']))) {
+                        $errorMessage = $this->extractErrorMessage($errorBody);
+                        
+                        Log::error('LiteLLM streaming HTTP error with body', [
+                            'request_id' => $requestId,
+                            'tier' => $tier,
+                            'status' => $response->status(),
+                            'body' => $errorBody,
+                            'error_message' => $errorMessage,
+                        ]);
+                        
+                        throw new ProviderException($errorMessage, $response->status());
+                    }
+                }
+                
+                // Fallback to standard error handling
                 $this->handleError($response, $tier);
             }
 
             $firstChunk = true;
             $timeToFirstToken = null;
             $hasError = false;
+            $bodyContent = $response->body();
 
-            foreach ($this->parseStreamedResponse($response->body()) as $chunk) {
+            // Check if body contains error before parsing stream
+            if (!empty($bodyContent)) {
+                // Try to detect if entire body is an error (not SSE stream)
+                $firstLine = explode("\n", $bodyContent)[0] ?? '';
+                if (str_starts_with(trim($firstLine), '{') && !str_contains($bodyContent, 'data: ')) {
+                    // Looks like a JSON error response, not SSE
+                    $errorBody = json_decode($bodyContent, true);
+                    if ($errorBody && (isset($errorBody['error']) || isset($errorBody['details']))) {
+                        $errorMessage = $this->extractErrorMessage($errorBody);
+                        
+                        Log::error('LiteLLM streaming error in response body', [
+                            'request_id' => $requestId,
+                            'tier' => $tier,
+                            'body' => $errorBody,
+                            'error_message' => $errorMessage,
+                        ]);
+                        
+                        throw new ProviderException($errorMessage, 502);
+                    }
+                }
+            }
+
+            foreach ($this->parseStreamedResponse($bodyContent) as $chunk) {
                 // Check for error in chunk (LiteLLM can send errors in stream)
-                if (isset($chunk['error'])) {
+                if (isset($chunk['error']) || isset($chunk['details'])) {
                     $hasError = true;
                     $errorMessage = $this->extractErrorMessage($chunk);
                     
@@ -318,8 +364,9 @@ class LiteLlmClient
             return $this->enhanceErrorMessage($message);
         }
 
-        // Format 3: LiteLLM format with details
+        // Format 3: LiteLLM format with details (ERROR_OPENAI, ERROR_ANTHROPIC, etc.)
         if (isset($body['error']) && isset($body['details'])) {
+            $errorType = is_string($body['error']) ? $body['error'] : null;
             $detail = $body['details'];
             
             if (is_array($detail)) {
@@ -328,26 +375,33 @@ class LiteLlmClient
                 
                 if ($detailText) {
                     // Try to extract nested JSON error from detail text
-                    // Pattern: API Error: ``` {...} ```
-                    if (preg_match('/API Error:\s*```\s*(\{.*?\})\s*```/s', $detailText, $jsonMatches)) {
-                        $errorJson = json_decode($jsonMatches[1], true);
-                        
-                        if ($errorJson) {
-                            // Try nested error.message
-                            if (isset($errorJson['error']['message'])) {
-                                return $this->enhanceErrorMessage($errorJson['error']['message']);
-                            }
+                    // Pattern: API Error: ``` {...} ``` or just ``` {...} ```
+                    $jsonPatterns = [
+                        '/API Error:\s*```\s*(\{.*?\})\s*```/s',
+                        '/```\s*(\{.*?\})\s*```/s',
+                    ];
+                    
+                    foreach ($jsonPatterns as $pattern) {
+                        if (preg_match($pattern, $detailText, $jsonMatches)) {
+                            $errorJson = json_decode($jsonMatches[1], true);
                             
-                            // Try error.message
-                            if (isset($errorJson['message'])) {
-                                return $this->enhanceErrorMessage($errorJson['message']);
-                            }
-                            
-                            // Try provider.body (which might be a JSON string)
-                            if (isset($errorJson['provider']['body'])) {
-                                $bodyJson = json_decode($errorJson['provider']['body'], true);
-                                if ($bodyJson && isset($bodyJson['message'])) {
-                                    return $this->enhanceErrorMessage($bodyJson['message']);
+                            if ($errorJson) {
+                                // Try nested error.message
+                                if (isset($errorJson['error']['message'])) {
+                                    return $this->enhanceErrorMessage($errorJson['error']['message']);
+                                }
+                                
+                                // Try error.message
+                                if (isset($errorJson['message'])) {
+                                    return $this->enhanceErrorMessage($errorJson['message']);
+                                }
+                                
+                                // Try provider.body (which might be a JSON string)
+                                if (isset($errorJson['provider']['body'])) {
+                                    $bodyJson = json_decode($errorJson['provider']['body'], true);
+                                    if ($bodyJson && isset($bodyJson['message'])) {
+                                        return $this->enhanceErrorMessage($bodyJson['message']);
+                                    }
                                 }
                             }
                         }
@@ -358,19 +412,51 @@ class LiteLlmClient
                         return $this->enhanceErrorMessage($matches[1]);
                     }
                     
-                    $message = $title ? "{$title}: {$detailText}" : $detailText;
+                    // Build message from title and detail
+                    if ($title && $detailText) {
+                        // If error type is known (ERROR_OPENAI, etc.), include it
+                        if ($errorType && str_starts_with($errorType, 'ERROR_')) {
+                            $message = "{$title} ({$errorType}): {$detailText}";
+                        } else {
+                            $message = "{$title}: {$detailText}";
+                        }
+                    } else {
+                        $message = $title ?: $detailText;
+                    }
+                    
                     return $this->enhanceErrorMessage($message);
                 }
                 
-                return $this->enhanceErrorMessage($title ?: $body['error']);
+                // If only title exists
+                if ($title) {
+                    $message = $errorType && str_starts_with($errorType, 'ERROR_') 
+                        ? "{$title} ({$errorType})" 
+                        : $title;
+                    return $this->enhanceErrorMessage($message);
+                }
+                
+                // Fallback to error type if it's a string
+                if ($errorType && str_starts_with($errorType, 'ERROR_')) {
+                    return $this->enhanceErrorMessage("Provider error: {$errorType}");
+                }
             }
             
-            return $this->enhanceErrorMessage(is_string($detail) ? $detail : (string) $body['error']);
+            // If details is a string
+            if (is_string($detail)) {
+                return $this->enhanceErrorMessage($detail);
+            }
         }
 
-        // Format 4: Direct error string
+        // Format 4: Direct error string (ERROR_OPENAI, ERROR_ANTHROPIC, etc.)
         if (isset($body['error']) && is_string($body['error'])) {
-            return $this->enhanceErrorMessage($body['error']);
+            $errorStr = $body['error'];
+            
+            // If it's an error code like ERROR_OPENAI, provide more context
+            if (str_starts_with($errorStr, 'ERROR_')) {
+                return $this->enhanceErrorMessage("Provider error: {$errorStr}");
+            }
+            
+            return $this->enhanceErrorMessage($errorStr);
         }
 
         // Format 5: Message field
@@ -381,14 +467,19 @@ class LiteLlmClient
         // Format 6: Direct error string in details
         if (isset($body['details']['detail'])) {
             $detailText = $body['details']['detail'];
+            
             // Try to extract "Server Error" or similar from detail
             if (preg_match('/Server Error/i', $detailText)) {
                 return $this->enhanceErrorMessage('Server Error');
             }
+            
             // Try to extract message from detail text (e.g., from JSON in code blocks)
             if (preg_match('/"message"\s*:\s*"([^"]+)"/', $detailText, $matches)) {
                 return $this->enhanceErrorMessage($matches[1]);
             }
+            
+            // Return the detail text itself
+            return $this->enhanceErrorMessage($detailText);
         }
 
         // Format 7: Check if body itself is a simple error message (string)
