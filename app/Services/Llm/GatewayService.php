@@ -218,6 +218,31 @@ class GatewayService
             foreach ($this->client->chatCompletionStream($payload, $tier, $requestId) as $chunkData) {
                 $chunk = $chunkData['chunk'];
                 
+                // Double-check for errors (safety net in case LiteLlmClient missed something)
+                if (isset($chunk['error']) || isset($chunk['details'])) {
+                    $errorMessage = 'Provider error';
+                    
+                    // Try to extract error message from chunk
+                    if (isset($chunk['error']['message'])) {
+                        $errorMessage = $chunk['error']['message'];
+                    } elseif (isset($chunk['details']['detail'])) {
+                        $errorMessage = $chunk['details']['detail'];
+                    } elseif (isset($chunk['details']['title'])) {
+                        $errorMessage = $chunk['details']['title'];
+                    } elseif (is_string($chunk['error'])) {
+                        $errorMessage = $chunk['error'];
+                    }
+                    
+                    Log::error('GatewayService detected error chunk that was not caught', [
+                        'request_id' => $requestId,
+                        'tier' => $tier,
+                        'chunk' => $chunk,
+                        'extracted_message' => $errorMessage,
+                    ]);
+                    
+                    throw new \App\Exceptions\Llm\ProviderException($errorMessage, 502);
+                }
+                
                 if ($timeToFirstToken === null) {
                     $timeToFirstToken = $chunkData['time_to_first_token_ms'];
                 }

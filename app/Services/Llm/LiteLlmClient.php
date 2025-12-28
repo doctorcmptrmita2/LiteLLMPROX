@@ -187,7 +187,8 @@ class LiteLlmClient
 
             foreach ($this->parseStreamedResponse($bodyContent) as $chunk) {
                 // Check for error in chunk (LiteLLM can send errors in stream)
-                if (isset($chunk['error']) || isset($chunk['details'])) {
+                // Format 1: Direct error field (string or object)
+                if (isset($chunk['error'])) {
                     $hasError = true;
                     $errorMessage = $this->extractErrorMessage($chunk);
                     
@@ -201,7 +202,22 @@ class LiteLlmClient
                     throw new ProviderException($errorMessage, 502);
                 }
                 
-                // Check for error in choices (alternative error format)
+                // Format 2: LiteLLM error format with details
+                if (isset($chunk['details'])) {
+                    $hasError = true;
+                    $errorMessage = $this->extractErrorMessage($chunk);
+                    
+                    Log::error('LiteLLM streaming error with details in chunk', [
+                        'request_id' => $requestId,
+                        'tier' => $tier,
+                        'chunk' => $chunk,
+                        'error_message' => $errorMessage,
+                    ]);
+                    
+                    throw new ProviderException($errorMessage, 502);
+                }
+                
+                // Format 3: Error in choices delta (alternative error format)
                 if (isset($chunk['choices'][0]['delta']['error'])) {
                     $hasError = true;
                     $errorData = $chunk['choices'][0]['delta']['error'];
@@ -211,6 +227,21 @@ class LiteLlmClient
                         'request_id' => $requestId,
                         'tier' => $tier,
                         'error_data' => $errorData,
+                        'error_message' => $errorMessage,
+                    ]);
+                    
+                    throw new ProviderException($errorMessage, 502);
+                }
+                
+                // Format 4: Check if chunk itself is an error (no choices, no content, just error info)
+                if (!isset($chunk['choices']) && !isset($chunk['content']) && (isset($chunk['error']) || isset($chunk['details']))) {
+                    $hasError = true;
+                    $errorMessage = $this->extractErrorMessage($chunk);
+                    
+                    Log::error('LiteLLM streaming error-only chunk', [
+                        'request_id' => $requestId,
+                        'tier' => $tier,
+                        'chunk' => $chunk,
                         'error_message' => $errorMessage,
                     ]);
                     
@@ -271,27 +302,38 @@ class LiteLlmClient
                 continue;
             }
             
+            $data = null;
+            
+            // Standard SSE format: "data: {...}"
             if (str_starts_with($line, 'data: ')) {
                 $data = substr($line, 6);
                 
                 if ($data === '[DONE]') {
                     return;
                 }
+            } 
+            // Non-standard: Direct JSON (some providers send errors this way)
+            elseif (str_starts_with($line, '{') || str_starts_with($line, '[')) {
+                $data = $line;
+            }
+            
+            if ($data === null) {
+                continue;
+            }
 
-                $json = json_decode($data, true);
-                
-                // Handle JSON decode errors
-                if (json_last_error() !== JSON_ERROR_NONE) {
-                    Log::warning('Failed to parse SSE chunk', [
-                        'data' => $data,
-                        'json_error' => json_last_error_msg(),
-                    ]);
-                    continue;
-                }
-                
-                if ($json) {
-                    yield $json;
-                }
+            $json = json_decode($data, true);
+            
+            // Handle JSON decode errors
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::warning('Failed to parse SSE chunk', [
+                    'data' => $data,
+                    'json_error' => json_last_error_msg(),
+                ]);
+                continue;
+            }
+            
+            if ($json) {
+                yield $json;
             }
         }
     }
