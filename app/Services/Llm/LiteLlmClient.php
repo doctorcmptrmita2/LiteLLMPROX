@@ -509,16 +509,44 @@ class LiteLlmClient
                         );
                     }
                     
-                    // Try simpler pattern: "message": "..."
+                    // Try simpler pattern: "message": "..." (extract from detail text)
                     if (preg_match('/"message"\s*:\s*"([^"]+)"/', $detailText, $matches)) {
-                        return $this->enhanceErrorMessage($matches[1]);
+                        $extractedMessage = $matches[1];
+                        // If it's "Server Error", provide more context
+                        if (strtolower(trim($extractedMessage)) === 'server error') {
+                            $providerHint = $errorType === 'ERROR_OPENAI' 
+                                ? 'OpenAI API may be experiencing issues or API key is invalid. ' 
+                                : 'The model provider may be experiencing issues. ';
+                            return $this->enhanceErrorMessage(
+                                $title ?: 'Unable to reach the model provider',
+                                $providerHint . 'Please check your API keys and try again later.'
+                            );
+                        }
+                        return $this->enhanceErrorMessage($extractedMessage);
+                    }
+                    
+                    // Check if detailText contains "Server Error" directly
+                    if (preg_match('/Server Error/i', $detailText)) {
+                        $providerHint = $errorType === 'ERROR_OPENAI' 
+                            ? 'OpenAI API returned a server error. This may be temporary. ' 
+                            : 'The model provider returned a server error. ';
+                        return $this->enhanceErrorMessage(
+                            $title ?: 'Server Error',
+                            $providerHint . 'Please try again in a moment or check your API key configuration.'
+                        );
                     }
                     
                     // Build message from title and detail
                     if ($title && $detailText) {
-                        // If error type is known (ERROR_OPENAI, etc.), include it
+                        // If error type is known (ERROR_OPENAI, etc.), provide more context
                         if ($errorType && str_starts_with($errorType, 'ERROR_')) {
-                            $message = "{$title} ({$errorType}): {$detailText}";
+                            // For ERROR_OPENAI, provide specific guidance
+                            if ($errorType === 'ERROR_OPENAI') {
+                                $hint = 'This usually indicates an issue with OpenAI API (invalid key, rate limit, or service outage). ';
+                                $message = "{$title}: {$hint}" . trim($detailText);
+                            } else {
+                                $message = "{$title} ({$errorType}): {$detailText}";
+                            }
                         } else {
                             $message = "{$title}: {$detailText}";
                         }
@@ -539,7 +567,8 @@ class LiteLlmClient
                 
                 // Fallback to error type if it's a string
                 if ($errorType && str_starts_with($errorType, 'ERROR_')) {
-                    return $this->enhanceErrorMessage("Provider error: {$errorType}");
+                    $providerName = str_replace('ERROR_', '', $errorType);
+                    return $this->enhanceErrorMessage("Provider error ({$providerName}): Unable to reach the model provider. Please check your API key configuration.");
                 }
             }
             
@@ -595,11 +624,18 @@ class LiteLlmClient
     /**
      * Enhance error message with helpful context for common issues.
      */
-    protected function enhanceErrorMessage(string $message): string
+    protected function enhanceErrorMessage(string $message, ?string $additionalContext = null): string
     {
+        // Add additional context if provided
+        if ($additionalContext) {
+            $message = $additionalContext . $message;
+        }
+        
         // Check for generic "Server Error"
-        if (strtolower(trim($message)) === 'server error') {
-            return 'Server Error: LiteLLM proxy encountered an internal error. This may be temporary. Please try again or contact support if the issue persists. (Proxy: ' . $this->baseUrl . ')';
+        if (strtolower(trim($message)) === 'server error' || str_contains(strtolower($message), 'server error')) {
+            return 'Server Error: The LLM provider encountered an internal error. This may be temporary. ' .
+                   'Please try again in a moment. If the issue persists, check your API key configuration and provider status. ' .
+                   '(Proxy: ' . $this->baseUrl . ')';
         }
         
         // Check for URL duplication issues (route contains /chat/completions twice)
@@ -618,7 +654,14 @@ class LiteLlmClient
         
         // Check for 500/502/503 errors
         if (preg_match('/50[0-3]/', $message) || str_contains(strtolower($message), 'internal server error')) {
-            return $message . ' (HINT: LiteLLM proxy may be experiencing issues. Please try again in a moment.)';
+            return $message . ' (HINT: LiteLLM proxy or the model provider may be experiencing issues. Please try again in a moment.)';
+        }
+        
+        // Check for OpenAI-specific errors
+        if (str_contains($message, 'ERROR_OPENAI') || str_contains($message, 'OpenAI')) {
+            if (!str_contains($message, 'API key') && !str_contains($message, 'rate limit')) {
+                return $message . ' (HINT: Check your OpenAI API key configuration in LiteLLM proxy settings.)';
+            }
         }
         
         return $message;
