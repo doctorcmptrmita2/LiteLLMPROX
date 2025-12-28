@@ -15,6 +15,13 @@ return Application::configure(basePath: dirname(__DIR__))
         // Trust all proxies (EasyPanel/Traefik)
         $middleware->trustProxies(at: '*');
         
+        // Validate CSRF except for these routes (temporary fix)
+        $middleware->validateCsrfTokens(except: [
+            'register',
+            'login',
+            'logout',
+        ]);
+        
         // Alias middleware
         $middleware->alias([
             'admin' => \App\Http\Middleware\AdminMiddleware::class,
