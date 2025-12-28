@@ -15,6 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // Gateway routes without /api prefix (OpenAI-compatible for Cursor)
             Route::middleware('api')
                 ->group(base_path('routes/gateway.php'));
+            
+            // Test routes (no middleware)
+            Route::group([], base_path('routes/test.php'));
         },
     )
     ->withMiddleware(function (Middleware $middleware) {
