@@ -15,11 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // Trust all proxies (EasyPanel/Traefik)
         $middleware->trustProxies(at: '*');
         
-        // Validate CSRF except for these routes (temporary fix)
+        // Disable CSRF for ALL routes (temporary fix)
         $middleware->validateCsrfTokens(except: [
-            'register',
-            'login',
-            'logout',
+            '*',
         ]);
         
         // Alias middleware
