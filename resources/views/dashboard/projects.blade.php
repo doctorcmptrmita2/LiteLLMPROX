@@ -178,11 +178,16 @@ function projectsPage() {
                 body: JSON.stringify({ name: 'API Key ' + new Date().toLocaleDateString('tr') })
             });
             
-            if (response.ok) {
-                const data = await response.json();
+            const data = await response.json();
+            console.log('Create key response:', response.status, data);
+            
+            if (response.ok && data.data?.key) {
                 const createdKey = data.data.key;
                 await this.refreshKeys();
                 this.newKey = createdKey;
+                console.log('New key set:', this.newKey);
+            } else {
+                alert(data.error?.message || 'Key oluşturulamadı');
             }
         },
         
