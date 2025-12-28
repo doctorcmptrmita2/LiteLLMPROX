@@ -103,22 +103,13 @@ class GatewayController extends Controller
         // Check for decompose trigger
         $forceDecompose = $request->header('x-decompose') === '1';
 
-        // Streaming temporarily disabled - use non-streaming for stability
-        $isStreaming = false; // $payload['stream'] ?? false;
+        // Check if client wants streaming
+        $clientWantsStream = $payload['stream'] ?? false;
+        
+        // Always use non-streaming internally for stability
+        $payload['stream'] = false;
 
         try {
-            if ($isStreaming) {
-                return $this->streamResponse(
-                    payload: $payload,
-                    user: $user,
-                    project: $project,
-                    apiKey: $apiKey,
-                    planConfig: $planConfig,
-                    requestId: $requestId,
-                    requestedTier: $requestedTier
-                );
-            }
-
             $response = $this->gatewayService->chatCompletion(
                 payload: $payload,
                 user: $user,
@@ -129,6 +120,11 @@ class GatewayController extends Controller
                 requestedTier: $requestedTier,
                 forceDecompose: $forceDecompose
             );
+
+            // If client wanted streaming, wrap response in SSE format
+            if ($clientWantsStream) {
+                return $this->fakeStreamResponse($response);
+            }
 
             return response()->json($response);
 
@@ -145,6 +141,63 @@ class GatewayController extends Controller
                 ],
             ], 500);
         }
+    }
+
+    /**
+     * Fake streaming response - wraps normal response in SSE format.
+     * This satisfies clients that expect streaming without actual streaming.
+     */
+    protected function fakeStreamResponse(array $response): StreamedResponse
+    {
+        return response()->stream(function () use ($response) {
+            // Convert response to streaming format
+            $content = $response['choices'][0]['message']['content'] ?? '';
+            
+            // Send as a single SSE chunk
+            $chunk = [
+                'id' => $response['id'] ?? 'chatcmpl-' . uniqid(),
+                'object' => 'chat.completion.chunk',
+                'created' => $response['created'] ?? time(),
+                'model' => $response['model'] ?? 'cf-fast',
+                'choices' => [
+                    [
+                        'index' => 0,
+                        'delta' => [
+                            'role' => 'assistant',
+                            'content' => $content,
+                        ],
+                        'finish_reason' => null,
+                    ],
+                ],
+            ];
+            
+            echo "data: " . json_encode($chunk) . "\n\n";
+            
+            // Send finish chunk
+            $finishChunk = [
+                'id' => $response['id'] ?? 'chatcmpl-' . uniqid(),
+                'object' => 'chat.completion.chunk',
+                'created' => $response['created'] ?? time(),
+                'model' => $response['model'] ?? 'cf-fast',
+                'choices' => [
+                    [
+                        'index' => 0,
+                        'delta' => [],
+                        'finish_reason' => 'stop',
+                    ],
+                ],
+            ];
+            
+            echo "data: " . json_encode($finishChunk) . "\n\n";
+            echo "data: [DONE]\n\n";
+            
+            flush();
+        }, 200, [
+            'Content-Type' => 'text/event-stream',
+            'Cache-Control' => 'no-cache',
+            'Connection' => 'keep-alive',
+            'X-Accel-Buffering' => 'no',
+        ]);
     }
 
     /**
