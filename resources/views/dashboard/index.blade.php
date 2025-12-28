@@ -82,7 +82,7 @@
     "cursor": {
       "provider": "openai",
       "api_key": "<span class="text-brand-400">API_KEY_İNİZ</span>",
-      "base_url": "https://api.codexflow.dev/v1"
+      "base_url": "https://codexflow.dev/api/v1"
     }
   }
 }</code></pre>

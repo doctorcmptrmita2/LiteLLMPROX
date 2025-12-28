@@ -76,7 +76,7 @@
     "cursor": {
       "provider": "openai",
       "api_key": "cf_xxxxx",
-      "base_url": "https://api.codexflow.dev/v1"
+      "base_url": "https://codexflow.dev/api/v1"
     }
   }
 }</code></pre>
