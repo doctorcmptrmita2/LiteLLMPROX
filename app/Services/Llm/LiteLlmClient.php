@@ -430,23 +430,83 @@ class LiteLlmClient
                             if ($errorJson) {
                                 // Try nested error.message
                                 if (isset($errorJson['error']['message'])) {
-                                    return $this->enhanceErrorMessage($errorJson['error']['message']);
+                                    $message = $errorJson['error']['message'];
+                                    // Check for route duplication error
+                                    if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $message)) {
+                                        return $this->enhanceErrorMessage(
+                                            'Route duplication error: LiteLLM base URL contains path segment. ' .
+                                            'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                                            'not include /api/v1/chat/completions path.'
+                                        );
+                                    }
+                                    return $this->enhanceErrorMessage($message);
                                 }
                                 
                                 // Try error.message
                                 if (isset($errorJson['message'])) {
-                                    return $this->enhanceErrorMessage($errorJson['message']);
+                                    $message = $errorJson['message'];
+                                    if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $message)) {
+                                        return $this->enhanceErrorMessage(
+                                            'Route duplication error: LiteLLM base URL contains path segment. ' .
+                                            'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                                            'not include /api/v1/chat/completions path.'
+                                        );
+                                    }
+                                    return $this->enhanceErrorMessage($message);
                                 }
                                 
                                 // Try provider.body (which might be a JSON string)
                                 if (isset($errorJson['provider']['body'])) {
-                                    $bodyJson = json_decode($errorJson['provider']['body'], true);
+                                    $bodyStr = $errorJson['provider']['body'];
+                                    
+                                    // Try to parse as JSON string first
+                                    $bodyJson = json_decode($bodyStr, true);
                                     if ($bodyJson && isset($bodyJson['message'])) {
-                                        return $this->enhanceErrorMessage($bodyJson['message']);
+                                        $message = $bodyJson['message'];
+                                        // Check for route duplication
+                                        if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $message)) {
+                                            return $this->enhanceErrorMessage(
+                                                'Route duplication error: LiteLLM base URL contains path segment. ' .
+                                                'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                                                'not include /api/v1/chat/completions path.'
+                                            );
+                                        }
+                                        return $this->enhanceErrorMessage($message);
                                     }
+                                    
+                                    // If not JSON, check if it contains route duplication message
+                                    if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $bodyStr)) {
+                                        return $this->enhanceErrorMessage(
+                                            'Route duplication error: LiteLLM base URL contains path segment. ' .
+                                            'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                                            'not include /api/v1/chat/completions path.'
+                                        );
+                                    }
+                                }
+                                
+                                // Try provider.message (alternative format)
+                                if (isset($errorJson['provider']['message'])) {
+                                    $message = $errorJson['provider']['message'];
+                                    if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $message)) {
+                                        return $this->enhanceErrorMessage(
+                                            'Route duplication error: LiteLLM base URL contains path segment. ' .
+                                            'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                                            'not include /api/v1/chat/completions path.'
+                                        );
+                                    }
+                                    return $this->enhanceErrorMessage($message);
                                 }
                             }
                         }
+                    }
+                    
+                    // Also check detailText directly for route duplication
+                    if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $detailText)) {
+                        return $this->enhanceErrorMessage(
+                            'Route duplication error: LiteLLM base URL contains path segment. ' .
+                            'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                            'not include /api/v1/chat/completions path.'
+                        );
                     }
                     
                     // Try simpler pattern: "message": "..."
@@ -542,9 +602,13 @@ class LiteLlmClient
             return 'Server Error: LiteLLM proxy encountered an internal error. This may be temporary. Please try again or contact support if the issue persists. (Proxy: ' . $this->baseUrl . ')';
         }
         
-        // Check for URL duplication issues
-        if (preg_match('/route\s+.*?\/chat\/completions\/chat\/completions/i', $message)) {
-            return $message . ' (HINT: Check LITELLM_BASE_URL in .env - it should be just the host and port, e.g., http://localhost:4000)';
+        // Check for URL duplication issues (route contains /chat/completions twice)
+        if (preg_match('/route.*?\/chat\/completions\/chat\/completions/i', $message)) {
+            return 'Route duplication error: The LiteLLM base URL is incorrectly configured. ' .
+                   'LITELLM_BASE_URL should be just the host and port (e.g., http://localhost:4000), ' .
+                   'NOT include any path like /api/v1/chat/completions. ' .
+                   'Current base URL: ' . $this->baseUrl . '. ' .
+                   'Please check your .env file and ensure LITELLM_BASE_URL does not contain any path segments.';
         }
         
         // Check for 404 errors
