@@ -212,6 +212,7 @@ class GatewayService
             'total_tokens' => 0,
         ];
         $timeToFirstToken = null;
+        $originalTier = $tier;
 
         try {
             foreach ($this->client->chatCompletionStream($payload, $tier, $requestId) as $chunkData) {
@@ -229,6 +230,59 @@ class GatewayService
                 }
 
                 yield $chunk;
+            }
+
+        } catch (\App\Exceptions\Llm\ProviderException $e) {
+            // Try fallback tier if provider error
+            $fallbackTier = $this->getFallbackTier($tier);
+            
+            if ($fallbackTier && $tier !== $fallbackTier) {
+                Log::warning('Streaming failed, trying fallback tier', [
+                    'request_id' => $requestId,
+                    'original_tier' => $tier,
+                    'fallback_tier' => $fallbackTier,
+                    'error' => $e->getMessage(),
+                ]);
+
+                // Rollback pre-authorization for original tier
+                $this->quotaService->postAdjust($user, $tier, $estimatedTotal, 0);
+
+                // Try fallback tier
+                $tier = $fallbackTier;
+                $payload = $this->admissionControl->clamp($payload, $tier);
+                
+                if ($this->quotaService->preAuthorize($user, $tier, $estimatedTotal)) {
+                    // Reset usage tracking
+                    $totalUsage = [
+                        'prompt_tokens' => 0,
+                        'completion_tokens' => 0,
+                        'total_tokens' => 0,
+                    ];
+                    $timeToFirstToken = null;
+
+                    // Retry with fallback
+                    foreach ($this->client->chatCompletionStream($payload, $tier, $requestId) as $chunkData) {
+                        $chunk = $chunkData['chunk'];
+                        
+                        if ($timeToFirstToken === null) {
+                            $timeToFirstToken = $chunkData['time_to_first_token_ms'];
+                        }
+
+                        if (isset($chunk['usage']) && is_array($chunk['usage'])) {
+                            $totalUsage['prompt_tokens'] = $chunk['usage']['prompt_tokens'] ?? 0;
+                            $totalUsage['completion_tokens'] = $chunk['usage']['completion_tokens'] ?? 0;
+                            $totalUsage['total_tokens'] = $chunk['usage']['total_tokens'] ?? 0;
+                        }
+
+                        yield $chunk;
+                    }
+                } else {
+                    // Fallback tier also exhausted, throw original error
+                    throw $e;
+                }
+            } else {
+                // No fallback available, throw error
+                throw $e;
             }
 
         } finally {

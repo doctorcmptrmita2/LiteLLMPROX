@@ -120,11 +120,31 @@ class GatewayController extends Controller
                 flush();
 
             } catch (LlmException $e) {
+                // Send error in OpenAI-compatible format
                 echo "data: " . json_encode([
                     'error' => [
                         'message' => $e->getMessage(),
                         'type' => $e->getErrorType(),
+                        'code' => $e->getCode(),
                     ],
+                    'isExpected' => true,
+                ]) . "\n\n";
+                ob_flush();
+                flush();
+            } catch (\Exception $e) {
+                // Catch any unexpected errors
+                \Illuminate\Support\Facades\Log::error('Unexpected streaming error', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+
+                echo "data: " . json_encode([
+                    'error' => [
+                        'message' => 'Internal server error during streaming',
+                        'type' => 'server_error',
+                        'code' => 'internal_error',
+                    ],
+                    'isExpected' => false,
                 ]) . "\n\n";
                 ob_flush();
                 flush();
