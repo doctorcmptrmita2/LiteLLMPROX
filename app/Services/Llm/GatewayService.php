@@ -219,7 +219,18 @@ class GatewayService
                 $chunk = $chunkData['chunk'];
                 
                 // Double-check for errors (safety net in case LiteLlmClient missed something)
-                if (isset($chunk['error']) || isset($chunk['details'])) {
+                // Check for LiteLLM error format: { "error": "ERROR_XXX", "details": {...} }
+                $isErrorChunk = isset($chunk['error']) || 
+                               (isset($chunk['details']) && 
+                                (isset($chunk['details']['title']) || isset($chunk['details']['detail'])));
+                
+                // Also check if error is a string starting with ERROR_
+                if ($isErrorChunk && 
+                    (is_string($chunk['error'] ?? null) && str_starts_with($chunk['error'], 'ERROR_'))) {
+                    $isErrorChunk = true;
+                }
+                
+                if ($isErrorChunk) {
                     // Use LiteLlmClient's extractErrorMessage method for consistent error parsing
                     $errorMessage = $this->extractErrorMessageFromChunk($chunk);
                     

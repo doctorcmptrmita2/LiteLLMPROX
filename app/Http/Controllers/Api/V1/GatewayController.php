@@ -92,8 +92,13 @@ class GatewayController extends Controller
         $planConfig = $request->attributes->get('plan_config');
         $requestId = $request->attributes->get('request_id');
 
-        // Get tier preference from header
+        // Get tier preference from header or model parameter
         $requestedTier = $request->header('x-quality');
+        
+        // If no tier from header, try to map from model parameter
+        if (!$requestedTier && isset($payload['model'])) {
+            $requestedTier = $this->mapModelToTier($payload['model']);
+        }
         
         // Check for decompose trigger
         $forceDecompose = $request->header('x-decompose') === '1';
@@ -165,6 +170,18 @@ class GatewayController extends Controller
                     requestId: $requestId,
                     requestedTier: $requestedTier
                 ) as $chunk) {
+                    // Final safety check: Don't send error chunks directly to client
+                    // LiteLLM can send error chunks in stream format: { "error": "ERROR_XXX", "details": {...} }
+                    if (isset($chunk['error']) || isset($chunk['details'])) {
+                        $errorType = is_string($chunk['error'] ?? null) ? $chunk['error'] : null;
+                        
+                        // If it's a LiteLLM error format (ERROR_OPENAI, etc.), throw exception
+                        if ($errorType && str_starts_with($errorType, 'ERROR_')) {
+                            $errorMessage = $chunk['details']['title'] ?? $chunk['details']['detail'] ?? 'Provider error';
+                            throw new \App\Exceptions\Llm\ProviderException($errorMessage, 502);
+                        }
+                    }
+                    
                     echo "data: " . json_encode($chunk) . "\n\n";
                     ob_flush();
                     flush();
@@ -210,6 +227,68 @@ class GatewayController extends Controller
             'X-Accel-Buffering' => 'no',
             'X-Request-Id' => $requestId,
         ]);
+    }
+
+    /**
+     * Map model name to tier.
+     */
+    protected function mapModelToTier(?string $model): ?string
+    {
+        if (!$model) {
+            return null;
+        }
+
+        $model = strtolower(trim($model));
+
+        // Claude Opus 4.5 / Opus 4.55 → deep tier
+        if (str_contains($model, 'opus') && (str_contains($model, '4.5') || str_contains($model, '4.55'))) {
+            return 'deep';
+        }
+
+        // Claude Sonnet 4 → deep tier
+        if (str_contains($model, 'sonnet') && str_contains($model, '4')) {
+            return 'deep';
+        }
+
+        // Claude Sonnet 3.5 → deep tier (fallback)
+        if (str_contains($model, 'sonnet') && str_contains($model, '3.5')) {
+            return 'deep';
+        }
+
+        // Claude Haiku 3.5 → fast tier
+        if (str_contains($model, 'haiku') && str_contains($model, '3.5')) {
+            return 'fast';
+        }
+
+        // GPT-4o-mini → planner tier
+        if (str_contains($model, 'gpt-4o-mini') || str_contains($model, 'gpt4o-mini')) {
+            return 'planner';
+        }
+
+        // Llama 405B → grace tier
+        if (str_contains($model, 'llama') && str_contains($model, '405')) {
+            return 'grace';
+        }
+
+        // Default: try to infer from model name patterns
+        if (str_contains($model, 'deep') || str_contains($model, 'opus') || str_contains($model, 'sonnet')) {
+            return 'deep';
+        }
+
+        if (str_contains($model, 'fast') || str_contains($model, 'haiku')) {
+            return 'fast';
+        }
+
+        if (str_contains($model, 'planner') || str_contains($model, 'gpt')) {
+            return 'planner';
+        }
+
+        if (str_contains($model, 'grace') || str_contains($model, 'llama')) {
+            return 'grace';
+        }
+
+        // Unknown model, return null to use default tier selection
+        return null;
     }
 
     /**

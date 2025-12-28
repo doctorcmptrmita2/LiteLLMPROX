@@ -75,3 +75,4 @@ class QuotaDaily extends Model
 }
 
 
+

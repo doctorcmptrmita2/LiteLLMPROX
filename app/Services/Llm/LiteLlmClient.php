@@ -223,24 +223,35 @@ class LiteLlmClient
                         'tier' => $tier,
                         'chunk' => $chunk,
                         'error_message' => $errorMessage,
+                        'base_url' => $this->baseUrl,
                     ]);
                     
                     throw new ProviderException($errorMessage, 502);
                 }
                 
-                // Format 2: LiteLLM error format with details
+                // Format 2: LiteLLM error format with details (ERROR_OPENAI, ERROR_ANTHROPIC, etc.)
+                // This format: { "error": "ERROR_OPENAI", "details": {...} }
                 if (isset($chunk['details'])) {
-                    $hasError = true;
-                    $errorMessage = $this->extractErrorMessage($chunk);
+                    // Check if this is an error chunk (has error field or error-like structure)
+                    $isErrorChunk = isset($chunk['error']) || 
+                                   (isset($chunk['details']['title']) && 
+                                    (stripos($chunk['details']['title'] ?? '', 'error') !== false || 
+                                     stripos($chunk['details']['title'] ?? '', 'unable') !== false));
                     
-                    Log::error('LiteLLM streaming error with details in chunk', [
-                        'request_id' => $requestId,
-                        'tier' => $tier,
-                        'chunk' => $chunk,
-                        'error_message' => $errorMessage,
-                    ]);
-                    
-                    throw new ProviderException($errorMessage, 502);
+                    if ($isErrorChunk) {
+                        $hasError = true;
+                        $errorMessage = $this->extractErrorMessage($chunk);
+                        
+                        Log::error('LiteLLM streaming error with details in chunk', [
+                            'request_id' => $requestId,
+                            'tier' => $tier,
+                            'chunk' => $chunk,
+                            'error_message' => $errorMessage,
+                            'base_url' => $this->baseUrl,
+                        ]);
+                        
+                        throw new ProviderException($errorMessage, 502);
+                    }
                 }
                 
                 // Format 3: Error in choices delta (alternative error format)
@@ -260,7 +271,9 @@ class LiteLlmClient
                 }
                 
                 // Format 4: Check if chunk itself is an error (no choices, no content, just error info)
-                if (!isset($chunk['choices']) && !isset($chunk['content']) && (isset($chunk['error']) || isset($chunk['details']))) {
+                // Also check for LiteLLM error format: { "error": "ERROR_XXX", "details": {...} }
+                if ((!isset($chunk['choices']) && !isset($chunk['content']) && (isset($chunk['error']) || isset($chunk['details']))) ||
+                    (isset($chunk['error']) && is_string($chunk['error']) && str_starts_with($chunk['error'], 'ERROR_'))) {
                     $hasError = true;
                     $errorMessage = $this->extractErrorMessage($chunk);
                     
@@ -269,6 +282,7 @@ class LiteLlmClient
                         'tier' => $tier,
                         'chunk' => $chunk,
                         'error_message' => $errorMessage,
+                        'base_url' => $this->baseUrl,
                     ]);
                     
                     throw new ProviderException($errorMessage, 502);
@@ -661,6 +675,7 @@ class LiteLlmClient
         if (strtolower(trim($message)) === 'server error' || str_contains(strtolower($message), 'server error')) {
             return 'Server Error: The LLM provider encountered an internal error. This may be temporary. ' .
                    'Please try again in a moment. If the issue persists, check your API key configuration and provider status. ' .
+                   'Common causes: Invalid API key, rate limit exceeded, or provider service outage. ' .
                    '(Proxy: ' . $this->baseUrl . ')';
         }
         

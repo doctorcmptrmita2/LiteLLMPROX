@@ -44,9 +44,10 @@ model_list:
       tpm: 50000
 
   # =========================
-  # DEEP POOL (Claude Sonnet 4) x3 org keys
+  # DEEP POOL (Claude Sonnet 4 + Opus 4.5) x3 org keys
   # Purpose: Complex logic, architecture decisions
-  # Cost: $3.00/1M input, $15.00/1M output
+  # Cost: $3.00/1M input, $15.00/1M output (Sonnet 4)
+  #       $15.00/1M input, $75.00/1M output (Opus 4.5)
   # =========================
   - model_name: cf-deep
     litellm_params:
@@ -71,6 +72,17 @@ model_list:
       timeout: 120
       rpm: 60
       tpm: 30000
+
+  # Opus 4.5 support (if available via Anthropic API)
+  # Note: Opus 4.5 may use different model identifier
+  # Uncomment and adjust model name when Opus 4.5 is available
+  # - model_name: cf-deep
+  #   litellm_params:
+  #     model: anthropic/claude-opus-4-20250514
+  #     api_key: os.environ/ANTHROPIC_KEY_ORG_A
+  #     timeout: 180
+  #     rpm: 30
+  #     tpm: 20000
 
   # =========================
   # DEEP FALLBACK (Claude Sonnet 3.5) x3 org keys
@@ -196,8 +208,10 @@ general_settings:
   # Master key for proxy authentication
   master_key: os.environ/LITELLM_MASTER_KEY
   
-  # Database DISABLED - We handle user/quota management in Laravel
-  # database_url: os.environ/DATABASE_URL
+  # Database for LiteLLM internal tracking (usage, health checks, etc.)
+  # We use SQLite for simplicity, but PostgreSQL is recommended for production
+  # Laravel handles user/quota management, but LiteLLM needs DB for internal operations
+  database_url: os.environ/LITELLM_DATABASE_URL
 
 # =============================================================================
 # ENVIRONMENT VARIABLES REQUIRED:
@@ -212,6 +226,8 @@ general_settings:
 # REDIS_PORT              - Redis port (default: 6379)
 # REDIS_PASSWORD          - Redis password
 # LITELLM_MASTER_KEY      - Master key for proxy auth
-# DATABASE_URL            - Database URL (optional)
+# LITELLM_DATABASE_URL    - Database URL for LiteLLM internal tracking
+#                           SQLite: sqlite:///./litellm.db
+#                           PostgreSQL: postgresql://user:pass@host:port/db
 # =============================================================================
 
