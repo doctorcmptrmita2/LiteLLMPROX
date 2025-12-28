@@ -167,20 +167,46 @@ class LiteLlmClient
             if (!empty($bodyContent)) {
                 // Try to detect if entire body is an error (not SSE stream)
                 $firstLine = explode("\n", $bodyContent)[0] ?? '';
-                if (str_starts_with(trim($firstLine), '{') && !str_contains($bodyContent, 'data: ')) {
+                $trimmedFirstLine = trim($firstLine);
+                
+                // Check if it's a JSON error response (not SSE stream)
+                if (str_starts_with($trimmedFirstLine, '{') && !str_contains($bodyContent, 'data: ')) {
                     // Looks like a JSON error response, not SSE
                     $errorBody = json_decode($bodyContent, true);
                     if ($errorBody && (isset($errorBody['error']) || isset($errorBody['details']))) {
                         $errorMessage = $this->extractErrorMessage($errorBody);
                         
-                        Log::error('LiteLLM streaming error in response body', [
+                        Log::error('LiteLLM streaming error in response body (non-SSE format)', [
                             'request_id' => $requestId,
                             'tier' => $tier,
                             'body' => $errorBody,
+                            'body_content' => $bodyContent,
                             'error_message' => $errorMessage,
                         ]);
                         
                         throw new ProviderException($errorMessage, 502);
+                    }
+                }
+                
+                // Also check if body starts with error format even if it contains 'data: '
+                // Sometimes LiteLLM sends error in first chunk
+                if (str_contains($bodyContent, '"error"') && str_contains($bodyContent, '"details"')) {
+                    // Try to extract error from first JSON object in body
+                    $firstJsonMatch = [];
+                    if (preg_match('/\{[^{}]*"error"[^{}]*\}/', $bodyContent, $firstJsonMatch)) {
+                        $errorBody = json_decode($firstJsonMatch[0], true);
+                        if ($errorBody && (isset($errorBody['error']) || isset($errorBody['details']))) {
+                            $errorMessage = $this->extractErrorMessage($errorBody);
+                            
+                            Log::error('LiteLLM streaming error detected in body (embedded in stream)', [
+                                'request_id' => $requestId,
+                                'tier' => $tier,
+                                'error_body' => $errorBody,
+                                'error_message' => $errorMessage,
+                            ]);
+                            
+                            throw new ProviderException($errorMessage, 502);
+                        }
                     }
                 }
             }

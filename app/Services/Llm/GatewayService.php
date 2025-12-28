@@ -220,18 +220,8 @@ class GatewayService
                 
                 // Double-check for errors (safety net in case LiteLlmClient missed something)
                 if (isset($chunk['error']) || isset($chunk['details'])) {
-                    $errorMessage = 'Provider error';
-                    
-                    // Try to extract error message from chunk
-                    if (isset($chunk['error']['message'])) {
-                        $errorMessage = $chunk['error']['message'];
-                    } elseif (isset($chunk['details']['detail'])) {
-                        $errorMessage = $chunk['details']['detail'];
-                    } elseif (isset($chunk['details']['title'])) {
-                        $errorMessage = $chunk['details']['title'];
-                    } elseif (is_string($chunk['error'])) {
-                        $errorMessage = $chunk['error'];
-                    }
+                    // Use LiteLlmClient's extractErrorMessage method for consistent error parsing
+                    $errorMessage = $this->extractErrorMessageFromChunk($chunk);
                     
                     Log::error('GatewayService detected error chunk that was not caught', [
                         'request_id' => $requestId,
@@ -382,6 +372,111 @@ class GatewayService
             'fast' => 'grace',
             default => null,
         };
+    }
+
+    /**
+     * Extract error message from chunk (similar to LiteLlmClient::extractErrorMessage).
+     */
+    protected function extractErrorMessageFromChunk(array $chunk): string
+    {
+        // Format 1: Standard OpenAI format
+        if (isset($chunk['error']['message'])) {
+            return $chunk['error']['message'];
+        }
+
+        // Format 2: LiteLLM format with details (ERROR_OPENAI, ERROR_ANTHROPIC, etc.)
+        if (isset($chunk['error']) && isset($chunk['details'])) {
+            $errorType = is_string($chunk['error']) ? $chunk['error'] : null;
+            $detail = $chunk['details'];
+            
+            if (is_array($detail)) {
+                $title = $detail['title'] ?? '';
+                $detailText = $detail['detail'] ?? '';
+                
+                if ($detailText) {
+                    // Try to extract nested JSON error from detail text
+                    // Pattern: API Error: ``` {...} ``` or just ``` {...} ```
+                    $jsonPatterns = [
+                        '/API Error:\s*```\s*(\{.*?\})\s*```/s',
+                        '/```\s*(\{.*?\})\s*```/s',
+                    ];
+                    
+                    foreach ($jsonPatterns as $pattern) {
+                        if (preg_match($pattern, $detailText, $jsonMatches)) {
+                            $errorJson = json_decode($jsonMatches[1], true);
+                            
+                            if ($errorJson && isset($errorJson['message'])) {
+                                $message = $errorJson['message'];
+                                // If it's "Server Error", provide more context
+                                if (strtolower(trim($message)) === 'server error') {
+                                    $providerHint = $errorType === 'ERROR_OPENAI' 
+                                        ? 'OpenAI API may be experiencing issues or API key is invalid. ' 
+                                        : 'The model provider may be experiencing issues. ';
+                                    return ($title ?: 'Unable to reach the model provider') . ': ' . 
+                                           $providerHint . 'Please check your API keys and try again later.';
+                                }
+                                return $message;
+                            }
+                        }
+                    }
+                    
+                    // Check if detailText contains "Server Error" directly
+                    if (preg_match('/Server Error/i', $detailText)) {
+                        $providerHint = $errorType === 'ERROR_OPENAI' 
+                            ? 'OpenAI API returned a server error. This may be temporary. ' 
+                            : 'The model provider returned a server error. ';
+                        return ($title ?: 'Server Error') . ': ' . 
+                               $providerHint . 'Please try again in a moment or check your API key configuration.';
+                    }
+                    
+                    // Try simpler pattern: "message": "..."
+                    if (preg_match('/"message"\s*:\s*"([^"]+)"/', $detailText, $matches)) {
+                        return $matches[1];
+                    }
+                    
+                    // Build message from title and detail
+                    if ($title && $detailText) {
+                        if ($errorType && str_starts_with($errorType, 'ERROR_')) {
+                            if ($errorType === 'ERROR_OPENAI') {
+                                $hint = 'This usually indicates an issue with OpenAI API (invalid key, rate limit, or service outage). ';
+                                return "{$title}: {$hint}" . trim($detailText);
+                            }
+                            return "{$title} ({$errorType}): {$detailText}";
+                        }
+                        return "{$title}: {$detailText}";
+                    }
+                    
+                    return $title ?: $detailText;
+                }
+                
+                if ($title) {
+                    return $errorType && str_starts_with($errorType, 'ERROR_') 
+                        ? "{$title} ({$errorType})" 
+                        : $title;
+                }
+            }
+        }
+
+        // Format 3: Direct error string (ERROR_OPENAI, ERROR_ANTHROPIC, etc.)
+        if (isset($chunk['error']) && is_string($chunk['error'])) {
+            $errorStr = $chunk['error'];
+            if (str_starts_with($errorStr, 'ERROR_')) {
+                $providerName = str_replace('ERROR_', '', $errorStr);
+                return "Provider error ({$providerName}): Unable to reach the model provider. Please check your API key configuration.";
+            }
+            return $errorStr;
+        }
+
+        // Format 4: Details only
+        if (isset($chunk['details']['detail'])) {
+            return $chunk['details']['detail'];
+        }
+
+        if (isset($chunk['details']['title'])) {
+            return $chunk['details']['title'];
+        }
+
+        return 'Unknown error from LLM provider';
     }
 }
 
