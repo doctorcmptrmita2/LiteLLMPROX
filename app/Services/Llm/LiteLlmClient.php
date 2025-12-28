@@ -18,8 +18,39 @@ class LiteLlmClient
 
     public function __construct()
     {
-        $this->baseUrl = rtrim(config('litellm.base_url'), '/');
+        $baseUrl = config('litellm.base_url');
+        
+        if (empty($baseUrl)) {
+            throw new \InvalidArgumentException('LITELLM_BASE_URL is not configured');
+        }
+        
+        // Normalize base URL - remove trailing slashes
+        $baseUrl = rtrim($baseUrl, '/');
+        
+        // Parse URL to ensure it's valid
+        $parsed = parse_url($baseUrl);
+        if ($parsed === false || !isset($parsed['scheme']) || !isset($parsed['host'])) {
+            throw new \InvalidArgumentException("Invalid LITELLM_BASE_URL format: {$baseUrl}. Expected format: http://host:port");
+        }
+        
+        // Rebuild URL without path (LiteLLM proxy should be at root)
+        $this->baseUrl = "{$parsed['scheme']}://{$parsed['host']}" . (isset($parsed['port']) ? ":{$parsed['port']}" : '');
+        
+        // If original URL had a path, log warning
+        if (isset($parsed['path']) && $parsed['path'] !== '/') {
+            Log::warning('LiteLLM base URL contains path segment - it will be ignored', [
+                'original_url' => $baseUrl,
+                'normalized_url' => $this->baseUrl,
+                'path_removed' => $parsed['path'],
+                'note' => 'LiteLLM proxy should be accessible at root (e.g., http://localhost:4000)',
+            ]);
+        }
+        
         $this->masterKey = config('litellm.master_key');
+        
+        if (empty($this->masterKey)) {
+            Log::warning('LITELLM_MASTER_KEY is not configured');
+        }
     }
 
     /**
@@ -35,6 +66,15 @@ class LiteLlmClient
 
         $startTime = microtime(true);
 
+        $endpoint = "{$this->baseUrl}/v1/chat/completions";
+        
+        Log::debug('LiteLLM request', [
+            'request_id' => $requestId,
+            'tier' => $tier,
+            'endpoint' => $endpoint,
+            'base_url' => $this->baseUrl,
+        ]);
+
         try {
             $response = Http::timeout($timeout)
                 ->withHeaders([
@@ -42,7 +82,7 @@ class LiteLlmClient
                     'Content-Type' => 'application/json',
                     'X-Request-Id' => $requestId,
                 ])
-                ->post("{$this->baseUrl}/v1/chat/completions", $payload);
+                ->post($endpoint, $payload);
 
             $latencyMs = (int) ((microtime(true) - $startTime) * 1000);
 
@@ -70,6 +110,15 @@ class LiteLlmClient
         $payload['model'] = $alias;
         $payload['stream'] = true;
 
+        $endpoint = "{$this->baseUrl}/v1/chat/completions";
+        
+        Log::debug('LiteLLM streaming request', [
+            'request_id' => $requestId,
+            'tier' => $tier,
+            'endpoint' => $endpoint,
+            'base_url' => $this->baseUrl,
+        ]);
+
         $startTime = microtime(true);
 
         try {
@@ -80,7 +129,7 @@ class LiteLlmClient
                     'X-Request-Id' => $requestId,
                 ])
                 ->withOptions(['stream' => true])
-                ->post("{$this->baseUrl}/v1/chat/completions", $payload);
+                ->post($endpoint, $payload);
 
             if (!$response->successful()) {
                 $this->handleError($response, $tier);
@@ -218,8 +267,10 @@ class LiteLlmClient
         Log::warning('LiteLLM error response', [
             'status' => $status,
             'tier' => $tier,
+            'base_url' => $this->baseUrl,
             'body' => $body,
             'error_type' => $errorType,
+            'extracted_message' => $message,
         ]);
 
         match ($status) {
@@ -240,10 +291,17 @@ class LiteLlmClient
     {
         // Format 1: Standard OpenAI format
         if (isset($body['error']['message'])) {
-            return $body['error']['message'];
+            $message = $body['error']['message'];
+            return $this->enhanceErrorMessage($message);
         }
 
-        // Format 2: LiteLLM format with details
+        // Format 2: Nested error structure (error.error.message)
+        if (isset($body['error']['error']['message'])) {
+            $message = $body['error']['error']['message'];
+            return $this->enhanceErrorMessage($message);
+        }
+
+        // Format 3: LiteLLM format with details
         if (isset($body['error']) && isset($body['details'])) {
             $detail = $body['details'];
             
@@ -252,31 +310,76 @@ class LiteLlmClient
                 $detailText = $detail['detail'] ?? '';
                 
                 if ($detailText) {
-                    // Try to extract API error message from detail
-                    if (preg_match('/API Error:\s*```\s*\{.*?"message"\s*:\s*"([^"]+)"\s*.*?\}\s*```/s', $detailText, $matches)) {
-                        return $matches[1];
+                    // Try to extract nested JSON error from detail text
+                    // Pattern: API Error: ``` {...} ```
+                    if (preg_match('/API Error:\s*```\s*(\{.*?\})\s*```/s', $detailText, $jsonMatches)) {
+                        $errorJson = json_decode($jsonMatches[1], true);
+                        
+                        if ($errorJson) {
+                            // Try nested error.message
+                            if (isset($errorJson['error']['message'])) {
+                                return $this->enhanceErrorMessage($errorJson['error']['message']);
+                            }
+                            
+                            // Try error.message
+                            if (isset($errorJson['message'])) {
+                                return $this->enhanceErrorMessage($errorJson['message']);
+                            }
+                            
+                            // Try provider.body (which might be a JSON string)
+                            if (isset($errorJson['provider']['body'])) {
+                                $bodyJson = json_decode($errorJson['provider']['body'], true);
+                                if ($bodyJson && isset($bodyJson['message'])) {
+                                    return $this->enhanceErrorMessage($bodyJson['message']);
+                                }
+                            }
+                        }
                     }
                     
-                    return $title ? "{$title}: {$detailText}" : $detailText;
+                    // Try simpler pattern: "message": "..."
+                    if (preg_match('/"message"\s*:\s*"([^"]+)"/', $detailText, $matches)) {
+                        return $this->enhanceErrorMessage($matches[1]);
+                    }
+                    
+                    $message = $title ? "{$title}: {$detailText}" : $detailText;
+                    return $this->enhanceErrorMessage($message);
                 }
                 
-                return $title ?: $body['error'];
+                return $this->enhanceErrorMessage($title ?: $body['error']);
             }
             
-            return is_string($detail) ? $detail : (string) $body['error'];
+            return $this->enhanceErrorMessage(is_string($detail) ? $detail : (string) $body['error']);
         }
 
-        // Format 3: Direct error string
+        // Format 4: Direct error string
         if (isset($body['error']) && is_string($body['error'])) {
-            return $body['error'];
+            return $this->enhanceErrorMessage($body['error']);
         }
 
-        // Format 4: Message field
+        // Format 5: Message field
         if (isset($body['message'])) {
-            return $body['message'];
+            return $this->enhanceErrorMessage($body['message']);
         }
 
         return 'Unknown error from LLM provider';
+    }
+
+    /**
+     * Enhance error message with helpful context for common issues.
+     */
+    protected function enhanceErrorMessage(string $message): string
+    {
+        // Check for URL duplication issues
+        if (preg_match('/route\s+.*?\/chat\/completions\/chat\/completions/i', $message)) {
+            return $message . ' (HINT: Check LITELLM_BASE_URL in .env - it should be just the host and port, e.g., http://localhost:4000)';
+        }
+        
+        // Check for 404 errors
+        if (str_contains($message, '404') || str_contains($message, 'not found')) {
+            return $message . ' (HINT: Verify LiteLLM proxy is running and accessible at ' . $this->baseUrl . ')';
+        }
+        
+        return $message;
     }
 
     /**
