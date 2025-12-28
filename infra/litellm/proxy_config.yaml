@@ -208,10 +208,8 @@ general_settings:
   # Master key for proxy authentication
   master_key: os.environ/LITELLM_MASTER_KEY
   
-  # Database for LiteLLM internal tracking (usage, health checks, etc.)
-  # We use SQLite for simplicity, but PostgreSQL is recommended for production
-  # Laravel handles user/quota management, but LiteLLM needs DB for internal operations
-  database_url: os.environ/DATABASE_URL
+  # Database DISABLED - Laravel handles all user/quota management
+  # LiteLLM runs in stateless mode (no internal DB needed)
 
 # =============================================================================
 # ENVIRONMENT VARIABLES REQUIRED:

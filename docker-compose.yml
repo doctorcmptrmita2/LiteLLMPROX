@@ -147,38 +147,14 @@ services:
       - codexflow-network
 
   # ===========================================================================
-  # POSTGRESQL (for LiteLLM Prisma)
-  # ===========================================================================
-  postgres:
-    image: postgres:15-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: litellm_secret_2024
-      POSTGRES_DB: litellm
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - codexflow-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-
-  # ===========================================================================
-  # LITELLM PROXY
+  # LITELLM PROXY (Stateless - No Database)
   # ===========================================================================
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
     restart: unless-stopped
     environment:
-      # Master key
+      # Master key for authentication
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-default-master-key}
-      
-      # Database for LiteLLM (PostgreSQL) - MUST use postgresql:// protocol
-      DATABASE_URL: "postgresql://litellm:litellm_secret_2024@postgres:5432/litellm"
       
       # Anthropic keys (use same key for all if only 1 available)
       ANTHROPIC_KEY_ORG_A: ${ANTHROPIC_KEY_ORG_A:-}
@@ -188,7 +164,7 @@ services:
       # OpenRouter (Llama FREE + GPT-4o-mini for planner/grace)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       
-      # Redis
+      # Redis (for caching only)
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-58c6633004b41e0a1823}
@@ -196,8 +172,6 @@ services:
       - ./infra/litellm/proxy_config.yaml:/app/config.yaml
     command: --config /app/config.yaml --port 4000
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_started
     networks:
@@ -210,8 +184,6 @@ volumes:
   mysql_data:
     driver: local
   redis_data:
-    driver: local
-  postgres_data:
     driver: local
 
 # =============================================================================
