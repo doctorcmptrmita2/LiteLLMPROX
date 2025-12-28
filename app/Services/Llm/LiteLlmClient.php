@@ -149,6 +149,23 @@ class LiteLlmClient
                         'request_id' => $requestId,
                         'tier' => $tier,
                         'chunk' => $chunk,
+                        'error_message' => $errorMessage,
+                    ]);
+                    
+                    throw new ProviderException($errorMessage, 502);
+                }
+                
+                // Check for error in choices (alternative error format)
+                if (isset($chunk['choices'][0]['delta']['error'])) {
+                    $hasError = true;
+                    $errorData = $chunk['choices'][0]['delta']['error'];
+                    $errorMessage = $this->extractErrorMessage($errorData);
+                    
+                    Log::error('LiteLLM streaming error in choice delta', [
+                        'request_id' => $requestId,
+                        'tier' => $tier,
+                        'error_data' => $errorData,
+                        'error_message' => $errorMessage,
                     ]);
                     
                     throw new ProviderException($errorMessage, 502);
@@ -361,6 +378,24 @@ class LiteLlmClient
             return $this->enhanceErrorMessage($body['message']);
         }
 
+        // Format 6: Direct error string in details
+        if (isset($body['details']['detail'])) {
+            $detailText = $body['details']['detail'];
+            // Try to extract "Server Error" or similar from detail
+            if (preg_match('/Server Error/i', $detailText)) {
+                return $this->enhanceErrorMessage('Server Error');
+            }
+            // Try to extract message from detail text (e.g., from JSON in code blocks)
+            if (preg_match('/"message"\s*:\s*"([^"]+)"/', $detailText, $matches)) {
+                return $this->enhanceErrorMessage($matches[1]);
+            }
+        }
+
+        // Format 7: Check if body itself is a simple error message (string)
+        if (is_string($body) && strtolower(trim($body)) === 'server error') {
+            return $this->enhanceErrorMessage('Server Error');
+        }
+
         return 'Unknown error from LLM provider';
     }
 
@@ -369,6 +404,11 @@ class LiteLlmClient
      */
     protected function enhanceErrorMessage(string $message): string
     {
+        // Check for generic "Server Error"
+        if (strtolower(trim($message)) === 'server error') {
+            return 'Server Error: LiteLLM proxy encountered an internal error. This may be temporary. Please try again or contact support if the issue persists. (Proxy: ' . $this->baseUrl . ')';
+        }
+        
         // Check for URL duplication issues
         if (preg_match('/route\s+.*?\/chat\/completions\/chat\/completions/i', $message)) {
             return $message . ' (HINT: Check LITELLM_BASE_URL in .env - it should be just the host and port, e.g., http://localhost:4000)';
@@ -377,6 +417,11 @@ class LiteLlmClient
         // Check for 404 errors
         if (str_contains($message, '404') || str_contains($message, 'not found')) {
             return $message . ' (HINT: Verify LiteLLM proxy is running and accessible at ' . $this->baseUrl . ')';
+        }
+        
+        // Check for 500/502/503 errors
+        if (preg_match('/50[0-3]/', $message) || str_contains(strtolower($message), 'internal server error')) {
+            return $message . ' (HINT: LiteLLM proxy may be experiencing issues. Please try again in a moment.)';
         }
         
         return $message;
