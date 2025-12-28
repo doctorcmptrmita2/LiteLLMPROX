@@ -131,6 +131,21 @@ model_list:
       rpm: 500
       tpm: 200000
 
+  # =========================
+  # AGENT TIER (Grok 4.1 Fast via OpenRouter)
+  # Purpose: Agent/Tool calling operations - Best agentic model!
+  # Context: 2,000,000 tokens (2M!)
+  # Cost: ~$3/1M input, ~$15/1M output
+  # =========================
+  - model_name: cf-agent
+    litellm_params:
+      model: openrouter/x-ai/grok-3-beta
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 180
+      rpm: 60
+      tpm: 500000
+      max_tokens: 4000
+
 # =============================================================================
 # ROUTER SETTINGS
 # =============================================================================

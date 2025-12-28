@@ -31,6 +31,7 @@ return [
         'planner' => 'cf-planner',              // GPT-4o-mini (JSON planner)
         'grace' => 'cf-grace',                  // Llama 405B FREE (OpenRouter)
         'grace_fallback' => 'cf-grace-fallback', // GPT-4o-mini (backup)
+        'agent' => 'cf-agent',                  // Grok 4.1 Fast - Best agentic model! (2M context)
     ],
 
     /*
@@ -58,6 +59,11 @@ return [
             'timeout' => 90,  // Longer for Llama FREE
             'max_input_tokens' => 8000,
             'max_output_tokens' => 800,
+        ],
+        'agent' => [
+            'timeout' => 180,  // Longer for complex agent tasks
+            'max_input_tokens' => 100000,  // 100K input (2M available!)
+            'max_output_tokens' => 4000,   // More output for file content
         ],
     ],
 

@@ -219,6 +219,7 @@ return [
         'fast' => ['max_input' => 8000, 'max_output' => 900, 'timeout' => 60],
         'deep' => ['max_input' => 16000, 'max_output' => 1400, 'timeout' => 120],
         'grace' => ['max_input' => 8000, 'max_output' => 800, 'timeout' => 90],
+        'agent' => ['max_input' => 100000, 'max_output' => 4000, 'timeout' => 180], // Grok 4.1 Fast - 2M context!
     ],
 
     /*
@@ -265,6 +266,7 @@ return [
         'planner' => ['input' => 0.15, 'output' => 0.60],
         'grace' => ['input' => 0.00, 'output' => 0.00],          // Llama FREE!
         'grace_fallback' => ['input' => 0.15, 'output' => 0.60], // GPT-4o-mini
+        'agent' => ['input' => 3.00, 'output' => 15.00],         // Grok 4.1 Fast (via OpenRouter)
     ],
 
     /*
