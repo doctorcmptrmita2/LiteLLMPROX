@@ -15,8 +15,10 @@ class ProjectApiKeyController extends Controller
      */
     public function index(Request $request, Project $project): JsonResponse
     {
-        // Authorization check
-        $this->authorize('view', $project);
+        // Authorization check - verify user owns project
+        if ($project->user_id !== $request->user()->id) {
+            abort(403, 'Unauthorized');
+        }
 
         $keys = $project->apiKeys()
             ->orderByDesc('created_at')
@@ -43,8 +45,10 @@ class ProjectApiKeyController extends Controller
      */
     public function store(Request $request, Project $project): JsonResponse
     {
-        // Authorization check
-        $this->authorize('update', $project);
+        // Authorization check - verify user owns project
+        if ($project->user_id !== $request->user()->id) {
+            abort(403, 'Unauthorized');
+        }
 
         $request->validate([
             'name' => 'required|string|max:255',
@@ -88,8 +92,10 @@ class ProjectApiKeyController extends Controller
      */
     public function destroy(Request $request, Project $project, ProjectApiKey $key): JsonResponse
     {
-        // Authorization check
-        $this->authorize('update', $project);
+        // Authorization check - verify user owns project
+        if ($project->user_id !== $request->user()->id) {
+            abort(403, 'Unauthorized');
+        }
 
         // Verify key belongs to project
         if ($key->project_id !== $project->id) {
@@ -128,8 +134,10 @@ class ProjectApiKeyController extends Controller
      */
     public function rotate(Request $request, Project $project, ProjectApiKey $key): JsonResponse
     {
-        // Authorization check
-        $this->authorize('update', $project);
+        // Authorization check - verify user owns project
+        if ($project->user_id !== $request->user()->id) {
+            abort(403, 'Unauthorized');
+        }
 
         // Verify key belongs to project
         if ($key->project_id !== $project->id) {
