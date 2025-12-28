@@ -180,8 +180,20 @@ function projectsPage() {
             
             if (response.ok) {
                 const data = await response.json();
-                this.newKey = data.data.key;
-                await this.showKeys(this.selectedProject);
+                const createdKey = data.data.key;
+                await this.refreshKeys();
+                this.newKey = createdKey;
+            }
+        },
+        
+        async refreshKeys() {
+            const token = localStorage.getItem('token');
+            const response = await fetch(`/api/v1/projects/${this.selectedProject.id}/keys`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                this.keys = data.data;
             }
         },
         
