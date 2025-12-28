@@ -347,6 +347,11 @@ class GatewayService
      */
     protected function shouldDecompose(array $payload, bool $force): bool
     {
+        // Check if decompose is enabled in config
+        if (!config('codexflow.decompose.enabled', true)) {
+            return false;
+        }
+
         if ($force) {
             return true;
         }
@@ -354,15 +359,18 @@ class GatewayService
         $triggers = config('codexflow.decompose.triggers');
         $messages = $payload['messages'] ?? [];
 
-        // Estimate input tokens
-        $estimatedTokens = $this->quotaService->estimateTokens($messages);
+        // Only count USER messages (ignore system context from Cursor)
+        $userMessages = array_filter($messages, fn($m) => ($m['role'] ?? '') === 'user');
+        
+        // Estimate input tokens from user messages only
+        $estimatedTokens = $this->quotaService->estimateTokens($userMessages);
         if ($estimatedTokens >= $triggers['min_input_tokens']) {
             return true;
         }
 
-        // Check character length
+        // Check character length of user messages only
         $totalChars = 0;
-        foreach ($messages as $message) {
+        foreach ($userMessages as $message) {
             $totalChars += strlen($message['content'] ?? '');
         }
 

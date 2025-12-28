@@ -187,10 +187,11 @@ return [
     |--------------------------------------------------------------------------
     */
     'decompose' => [
+        'enabled' => false, // DISABLED: Causing loop issues with Cursor IDE
         'triggers' => [
             'header' => 'x-decompose',
-            'min_input_tokens' => 8000,
-            'min_char_length' => 24000,
+            'min_input_tokens' => 50000,  // Raised to avoid false triggers
+            'min_char_length' => 150000,  // Raised significantly
         ],
         'limits' => [
             'max_planner_calls' => 1,
