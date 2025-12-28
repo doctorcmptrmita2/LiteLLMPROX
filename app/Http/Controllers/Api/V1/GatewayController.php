@@ -233,60 +233,32 @@ class GatewayController extends Controller
     protected function mapModelToTier(?string $model): ?string
     {
         if (!$model) {
-            return null;
+            return 'fast'; // Default to fast
         }
 
         $model = strtolower(trim($model));
 
-        // Claude Opus 4.5 / Opus 4.55 → deep tier
-        if (str_contains($model, 'opus') && (str_contains($model, '4.5') || str_contains($model, '4.55'))) {
-            return 'deep';
+        // TEMPORARY: Force all requests to fast tier until rate limit issues resolved
+        // TODO: Re-enable tier mapping when Anthropic rate limits are sorted out
+        if (str_contains($model, 'cf-fast') || str_contains($model, 'haiku')) {
+            return 'fast';
         }
-
-        // Claude Sonnet 4 → deep tier
-        if (str_contains($model, 'sonnet') && str_contains($model, '4')) {
-            return 'deep';
-        }
-
-        // Claude Sonnet 3.5 → deep tier (fallback)
-        if (str_contains($model, 'sonnet') && str_contains($model, '3.5')) {
-            return 'deep';
-        }
-
-        // Claude Haiku 3.5 → fast tier
-        if (str_contains($model, 'haiku') && str_contains($model, '3.5')) {
+        
+        if (str_contains($model, 'cf-deep') || str_contains($model, 'opus') || str_contains($model, 'sonnet')) {
+            // Temporarily route to fast instead of deep
             return 'fast';
         }
 
-        // GPT-4o-mini → planner tier
-        if (str_contains($model, 'gpt-4o-mini') || str_contains($model, 'gpt4o-mini')) {
+        if (str_contains($model, 'cf-planner') || str_contains($model, 'gpt')) {
             return 'planner';
         }
 
-        // Llama 405B → grace tier
-        if (str_contains($model, 'llama') && str_contains($model, '405')) {
+        if (str_contains($model, 'cf-grace') || str_contains($model, 'llama')) {
             return 'grace';
         }
 
-        // Default: try to infer from model name patterns
-        if (str_contains($model, 'deep') || str_contains($model, 'opus') || str_contains($model, 'sonnet')) {
-            return 'deep';
-        }
-
-        if (str_contains($model, 'fast') || str_contains($model, 'haiku')) {
-            return 'fast';
-        }
-
-        if (str_contains($model, 'planner') || str_contains($model, 'gpt')) {
-            return 'planner';
-        }
-
-        if (str_contains($model, 'grace') || str_contains($model, 'llama')) {
-            return 'grace';
-        }
-
-        // Unknown model, return null to use default tier selection
-        return null;
+        // Default to fast for everything else
+        return 'fast';
     }
 
     /**
