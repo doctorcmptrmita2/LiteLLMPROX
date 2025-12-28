@@ -71,31 +71,36 @@ class UsageController extends Controller
             'date' => $row->date->toDateString(),
             'project_id' => $row->project_id,
             'fast' => [
-                'tokens' => $row->fast_tokens,
-                'requests' => $row->fast_requests,
-                'cost_usd' => (float) $row->fast_cost_usd,
+                'tokens' => $row->fast_tokens ?? 0,
+                'requests' => $row->fast_requests ?? 0,
+                'cost_usd' => (float) ($row->fast_cost_usd ?? 0),
             ],
             'deep' => [
-                'tokens' => $row->deep_tokens,
-                'requests' => $row->deep_requests,
-                'cost_usd' => (float) $row->deep_cost_usd,
+                'tokens' => $row->deep_tokens ?? 0,
+                'requests' => $row->deep_requests ?? 0,
+                'cost_usd' => (float) ($row->deep_cost_usd ?? 0),
+            ],
+            'agent' => [
+                'tokens' => $row->agent_tokens ?? 0,
+                'requests' => $row->agent_requests ?? 0,
+                'cost_usd' => (float) ($row->agent_cost_usd ?? 0),
             ],
             'grace' => [
-                'tokens' => $row->grace_tokens,
-                'requests' => $row->grace_requests,
-                'cost_usd' => (float) $row->grace_cost_usd,
+                'tokens' => $row->grace_tokens ?? 0,
+                'requests' => $row->grace_requests ?? 0,
+                'cost_usd' => (float) ($row->grace_cost_usd ?? 0),
             ],
             'planner' => [
-                'tokens' => $row->planner_tokens,
-                'requests' => $row->planner_requests,
+                'tokens' => $row->planner_tokens ?? 0,
+                'requests' => $row->planner_requests ?? 0,
             ],
             'total' => [
-                'tokens' => $row->total_tokens,
-                'requests' => $row->total_requests,
-                'cost_usd' => (float) $row->total_cost_usd,
+                'tokens' => $row->total_tokens ?? 0,
+                'requests' => $row->total_requests ?? 0,
+                'cost_usd' => (float) ($row->total_cost_usd ?? 0),
             ],
-            'cache_hits' => $row->cache_hits,
-            'decomposed_requests' => $row->decomposed_requests,
+            'cache_hits' => $row->cache_hits ?? 0,
+            'decomposed_requests' => $row->decomposed_requests ?? 0,
         ]);
 
         return response()->json([
@@ -115,7 +120,6 @@ class UsageController extends Controller
     {
         $requests = LlmRequest::whereIn('project_id', $projectIds)
             ->whereBetween('created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
-            ->where('status', 'success')
             ->get();
 
         if ($requests->isEmpty()) {
@@ -129,33 +133,40 @@ class UsageController extends Controller
         foreach ($grouped as $date => $dayRequests) {
             $fast = $dayRequests->where('tier', 'fast');
             $deep = $dayRequests->where('tier', 'deep');
+            $agent = $dayRequests->where('tier', 'agent');
             $grace = $dayRequests->where('tier', 'grace');
 
-            $fastTokens = $fast->sum('input_tokens') + $fast->sum('output_tokens');
-            $deepTokens = $deep->sum('input_tokens') + $deep->sum('output_tokens');
-            $graceTokens = $grace->sum('input_tokens') + $grace->sum('output_tokens');
+            $fastTokens = $fast->sum('prompt_tokens') + $fast->sum('completion_tokens');
+            $deepTokens = $deep->sum('prompt_tokens') + $deep->sum('completion_tokens');
+            $agentTokens = $agent->sum('prompt_tokens') + $agent->sum('completion_tokens');
+            $graceTokens = $grace->sum('prompt_tokens') + $grace->sum('completion_tokens');
 
             $result[] = [
                 'date' => $date,
                 'fast' => [
                     'tokens' => $fastTokens,
                     'requests' => $fast->count(),
-                    'cost_usd' => $fast->sum('cost_usd'),
+                    'cost_usd' => (float) $fast->sum('cost_usd'),
                 ],
                 'deep' => [
                     'tokens' => $deepTokens,
                     'requests' => $deep->count(),
-                    'cost_usd' => $deep->sum('cost_usd'),
+                    'cost_usd' => (float) $deep->sum('cost_usd'),
+                ],
+                'agent' => [
+                    'tokens' => $agentTokens,
+                    'requests' => $agent->count(),
+                    'cost_usd' => (float) $agent->sum('cost_usd'),
                 ],
                 'grace' => [
                     'tokens' => $graceTokens,
                     'requests' => $grace->count(),
-                    'cost_usd' => $grace->sum('cost_usd'),
+                    'cost_usd' => (float) $grace->sum('cost_usd'),
                 ],
                 'total' => [
-                    'tokens' => $fastTokens + $deepTokens + $graceTokens,
+                    'tokens' => $fastTokens + $deepTokens + $agentTokens + $graceTokens,
                     'requests' => $dayRequests->count(),
-                    'cost_usd' => $dayRequests->sum('cost_usd'),
+                    'cost_usd' => (float) $dayRequests->sum('cost_usd'),
                 ],
             ];
         }

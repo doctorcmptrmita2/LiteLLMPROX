@@ -1,27 +1,82 @@
 # =============================================================================
 # CODEXFLOW.DEV - LiteLLM Proxy Configuration
-# Version: 2.1 (Stateless Mode)
+# Version: 3.0 (Role-Based Pipeline Edition)
 # =============================================================================
 #
 # IMPORTANT: LiteLLM runs in STATELESS mode (no database).
 # All user management, quota tracking, and usage logging is handled by Laravel.
 # LiteLLM is just a smart proxy that routes requests to the right LLM provider.
 #
-# ALIAS STRATEGY:
-# - cf-fast    → Claude Haiku 3.5 (3 org key pool) - Quick tasks
-# - cf-deep    → Claude Sonnet 4 (3 org key pool) - Complex logic
-# - cf-planner → GPT-4o-mini - Plan/chunk JSON only
-# - cf-grace   → Llama 3.1 405B FREE (OpenRouter) - Quota exhausted fallback
-# - cf-grace-fallback → GPT-4o-mini - If Llama fails
+# ROLE-BASED ALIAS STRATEGY:
+# ─────────────────────────────────────────────────────────────────────────────
+# TRIAGE & PLANNING:
+#   cf-triage         → GPT-4o-mini           → Task classification (cheap)
+#   cf-planner        → GPT-4o-mini           → Plan/chunk JSON generation
 #
+# CODING TIERS:
+#   cf-fast           → Claude Haiku 3.5      → Quick tasks (legacy alias)
+#   cf-cheap-coder    → Claude Haiku 3.5      → Cheap coding tier
+#   cf-balanced-coder → Claude Sonnet 4       → Balanced coding (3+ files)
+#   cf-premium-coder  → Claude Sonnet 4.5     → Premium (high/critical risk)
+#   cf-deep           → Claude Sonnet 4       → Complex logic (legacy alias)
+#
+# REVIEW & FALLBACK:
+#   cf-budget-reviewer → DeepSeek V3          → Budget code review
+#   cf-oss-fallback    → DeepSeek V3          → OSS fallback for providers
+#
+# GRACE LANE:
+#   cf-grace          → Llama 3.1 405B FREE   → Quota exhausted (FREE!)
+#   cf-grace-fallback → GPT-4o-mini           → If Llama fails
+#
+# AGENT:
+#   cf-agent          → Grok 3 Beta           → Agent/tool operations
 # =============================================================================
 
 model_list:
-  # =========================
-  # FAST POOL (Claude Haiku 3.5) x3 org keys
-  # Purpose: Quick, simple coding tasks
+  # ===========================================================================
+  # TRIAGE (GPT-4o-mini via OpenRouter)
+  # Purpose: Task classification, risk scoring - CHEAP
+  # Cost: $0.15/1M input, $0.60/1M output
+  # ===========================================================================
+  - model_name: cf-triage
+    litellm_params:
+      model: openrouter/openai/gpt-4o-mini
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 15
+      rpm: 500
+      tpm: 100000
+      max_tokens: 800
+
+  # ===========================================================================
+  # CHEAP CODER (Claude Haiku 3.5) x3 org keys
+  # Purpose: Small fixes, tests, simple tasks
   # Cost: $0.80/1M input, $4.00/1M output
-  # =========================
+  # ===========================================================================
+  - model_name: cf-cheap-coder
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-latest
+      api_key: os.environ/ANTHROPIC_KEY_ORG_A
+      timeout: 60
+      max_tokens: 3000
+
+  - model_name: cf-cheap-coder
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-latest
+      api_key: os.environ/ANTHROPIC_KEY_ORG_B
+      timeout: 60
+      max_tokens: 3000
+
+  - model_name: cf-cheap-coder
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-latest
+      api_key: os.environ/ANTHROPIC_KEY_ORG_C
+      timeout: 60
+      max_tokens: 3000
+
+  # ===========================================================================
+  # FAST POOL (Legacy alias - maps to Haiku 3.5)
+  # Kept for backward compatibility
+  # ===========================================================================
   - model_name: cf-fast
     litellm_params:
       model: anthropic/claude-3-5-haiku-latest
@@ -40,11 +95,36 @@ model_list:
       api_key: os.environ/ANTHROPIC_KEY_ORG_C
       timeout: 60
 
-  # =========================
-  # DEEP POOL (Claude Sonnet 4) x3 org keys
-  # Purpose: Complex logic, architecture decisions
+  # ===========================================================================
+  # BALANCED CODER (Claude Sonnet 4) x3 org keys
+  # Purpose: Medium complexity, 2-5 file changes
   # Cost: $3.00/1M input, $15.00/1M output
-  # =========================
+  # ===========================================================================
+  - model_name: cf-balanced-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_KEY_ORG_A
+      timeout: 120
+      max_tokens: 6000
+
+  - model_name: cf-balanced-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_KEY_ORG_B
+      timeout: 120
+      max_tokens: 6000
+
+  - model_name: cf-balanced-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-20250514
+      api_key: os.environ/ANTHROPIC_KEY_ORG_C
+      timeout: 120
+      max_tokens: 6000
+
+  # ===========================================================================
+  # DEEP POOL (Legacy alias - maps to Sonnet 4)
+  # Kept for backward compatibility
+  # ===========================================================================
   - model_name: cf-deep
     litellm_params:
       model: anthropic/claude-sonnet-4-20250514
@@ -63,10 +143,36 @@ model_list:
       api_key: os.environ/ANTHROPIC_KEY_ORG_C
       timeout: 120
 
-  # =========================
+  # ===========================================================================
+  # PREMIUM CODER (Claude Sonnet 4.5) x3 org keys
+  # Purpose: High/critical risk, auth/billing/webhooks
+  # Cost: $3.00/1M input, $15.00/1M output
+  # ===========================================================================
+  - model_name: cf-premium-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_KEY_ORG_A
+      timeout: 180
+      max_tokens: 6000
+
+  - model_name: cf-premium-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_KEY_ORG_B
+      timeout: 180
+      max_tokens: 6000
+
+  - model_name: cf-premium-coder
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_KEY_ORG_C
+      timeout: 180
+      max_tokens: 6000
+
+  # ===========================================================================
   # DEEP FALLBACK (Claude Sonnet 3.5) x3 org keys
-  # Purpose: Fallback when Sonnet 4 fails
-  # =========================
+  # Purpose: Fallback when Sonnet 4/4.5 fails
+  # ===========================================================================
   - model_name: cf-deep-fallback
     litellm_params:
       model: anthropic/claude-3-5-sonnet-latest
@@ -91,25 +197,53 @@ model_list:
       rpm: 60
       tpm: 30000
 
-  # =========================
+  # ===========================================================================
+  # BUDGET REVIEWER (DeepSeek V3 via OpenRouter)
+  # Purpose: Code review for low/medium risk - VERY CHEAP
+  # Cost: $0.14/1M input, $0.28/1M output
+  # ===========================================================================
+  - model_name: cf-budget-reviewer
+    litellm_params:
+      model: openrouter/deepseek/deepseek-chat
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      rpm: 100
+      tpm: 200000
+      max_tokens: 2500
+
+  # ===========================================================================
+  # OSS FALLBACK (DeepSeek V3 via OpenRouter)
+  # Purpose: Fallback when Anthropic/OpenAI providers fail
+  # Cost: $0.14/1M input, $0.28/1M output
+  # ===========================================================================
+  - model_name: cf-oss-fallback
+    litellm_params:
+      model: openrouter/deepseek/deepseek-chat
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 90
+      rpm: 100
+      tpm: 200000
+      max_tokens: 4000
+
+  # ===========================================================================
   # PLANNER (GPT-4o-mini via OpenRouter)
   # Purpose: Decompose pipeline - JSON plan generation
   # Cost: $0.15/1M input, $0.60/1M output
-  # =========================
+  # ===========================================================================
   - model_name: cf-planner
     litellm_params:
       model: openrouter/openai/gpt-4o-mini
       api_key: os.environ/OPENROUTER_API_KEY
-      timeout: 30
+      timeout: 45
       rpm: 500
       tpm: 100000
-      max_tokens: 500
+      max_tokens: 2000
 
-  # =========================
+  # ===========================================================================
   # GRACE LANE PRIMARY (Llama 3.1 405B FREE via OpenRouter)
   # Purpose: When user quota exhausted - FREE fallback!
   # Cost: $0 (FREE!)
-  # =========================
+  # ===========================================================================
   - model_name: cf-grace
     litellm_params:
       model: openrouter/meta-llama/llama-3.1-405b-instruct:free
@@ -117,12 +251,13 @@ model_list:
       timeout: 90
       rpm: 20
       tpm: 100000
+      max_tokens: 2000
 
-  # =========================
+  # ===========================================================================
   # GRACE LANE FALLBACK (GPT-4o-mini via OpenRouter)
   # Purpose: If Llama fails, use this
   # Cost: $0.15/1M input, $0.60/1M output
-  # =========================
+  # ===========================================================================
   - model_name: cf-grace-fallback
     litellm_params:
       model: openrouter/openai/gpt-4o-mini
@@ -130,13 +265,14 @@ model_list:
       timeout: 60
       rpm: 500
       tpm: 200000
+      max_tokens: 2000
 
-  # =========================
-  # AGENT TIER (Grok 4.1 Fast via OpenRouter)
+  # ===========================================================================
+  # AGENT TIER (Grok 3 Beta via OpenRouter)
   # Purpose: Agent/Tool calling operations - Best agentic model!
   # Context: 2,000,000 tokens (2M!)
   # Cost: ~$3/1M input, ~$15/1M output
-  # =========================
+  # ===========================================================================
   - model_name: cf-agent
     litellm_params:
       model: openrouter/x-ai/grok-3-beta
@@ -145,6 +281,24 @@ model_list:
       rpm: 60
       tpm: 500000
       max_tokens: 4000
+
+  # ===========================================================================
+  # GROK TOOLS - Background Agent Tool Operations (Grok 4.1 Fast)
+  # Purpose: Background tool operations with massive 2M context
+  # Context: 2,000,000 tokens - ideal for large codebase analysis
+  # Features: Tool calling optimized, reasoning toggle
+  # Cost: ~$3/1M input, ~$15/1M output
+  # ===========================================================================
+  - model_name: cf-grok-tools
+    litellm_params:
+      model: openrouter/x-ai/grok-4.1-fast
+      api_key: os.environ/OPENROUTER_API_KEY
+      timeout: 300                    # 5 min for heavy tool ops
+      rpm: 40
+      tpm: 1000000                    # 1M TPM - supports huge context
+      max_tokens: 8000
+      # Reasoning disabled by default for cost efficiency
+      # Enable via request header when needed
 
 # =============================================================================
 # ROUTER SETTINGS
@@ -155,7 +309,7 @@ router_settings:
   
   # Retry settings
   num_retries: 2
-  timeout: 140
+  timeout: 180
   
   # Cooldown for failing deployments
   allowed_fails: 3
@@ -167,12 +321,20 @@ router_settings:
 litellm_settings:
   # Global retry and timeout
   num_retries: 2
-  request_timeout: 140
+  request_timeout: 180
   
-  # Fallback chains
+  # Fallback chains - Role-based
   fallbacks:
+    # Premium falls back to balanced, then OSS
+    - cf-premium-coder: [cf-balanced-coder, cf-oss-fallback]
+    # Balanced falls back to cheap, then OSS  
+    - cf-balanced-coder: [cf-cheap-coder, cf-oss-fallback]
+    # Deep (legacy) falls back to deep-fallback
     - cf-deep: [cf-deep-fallback]
+    # Grace falls back to paid GPT-4o-mini
     - cf-grace: [cf-grace-fallback]
+    # Planner falls back to triage (simpler plans)
+    - cf-planner: [cf-triage]
   
   # Drop params that provider doesn't support
   drop_params: true
@@ -195,6 +357,6 @@ general_settings:
 # ANTHROPIC_KEY_ORG_A     - Anthropic API key (org A)
 # ANTHROPIC_KEY_ORG_B     - Anthropic API key (org B)  
 # ANTHROPIC_KEY_ORG_C     - Anthropic API key (org C)
-# OPENROUTER_API_KEY      - OpenRouter key (Llama FREE + GPT-4o-mini)
+# OPENROUTER_API_KEY      - OpenRouter key (Llama FREE + GPT-4o-mini + DeepSeek)
 # LITELLM_MASTER_KEY      - Master key for proxy auth
 # =============================================================================
