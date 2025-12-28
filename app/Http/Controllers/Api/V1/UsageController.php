@@ -47,49 +47,120 @@ class UsageController extends Controller
             $projectIds = collect([$projectId]);
         }
 
-        // Get aggregated usage
+        // Try aggregated data first
         $usage = UsageDailyAggregate::whereIn('project_id', $projectIds)
             ->whereBetween('date', [$from, $to])
             ->orderBy('date')
-            ->get()
-            ->map(fn($row) => [
-                'date' => $row->date->toDateString(),
-                'project_id' => $row->project_id,
-                'fast' => [
-                    'tokens' => $row->fast_tokens,
-                    'requests' => $row->fast_requests,
-                    'cost_usd' => (float) $row->fast_cost_usd,
+            ->get();
+
+        // If no aggregated data, compute from LlmRequest directly
+        if ($usage->isEmpty()) {
+            $usage = $this->computeUsageFromRequests($projectIds, $from, $to);
+            
+            return response()->json([
+                'data' => $usage,
+                'period' => [
+                    'from' => $from,
+                    'to' => $to,
                 ],
-                'deep' => [
-                    'tokens' => $row->deep_tokens,
-                    'requests' => $row->deep_requests,
-                    'cost_usd' => (float) $row->deep_cost_usd,
-                ],
-                'grace' => [
-                    'tokens' => $row->grace_tokens,
-                    'requests' => $row->grace_requests,
-                    'cost_usd' => (float) $row->grace_cost_usd,
-                ],
-                'planner' => [
-                    'tokens' => $row->planner_tokens,
-                    'requests' => $row->planner_requests,
-                ],
-                'total' => [
-                    'tokens' => $row->total_tokens,
-                    'requests' => $row->total_requests,
-                    'cost_usd' => (float) $row->total_cost_usd,
-                ],
-                'cache_hits' => $row->cache_hits,
-                'decomposed_requests' => $row->decomposed_requests,
+                'source' => 'realtime',
             ]);
+        }
+
+        $formattedUsage = $usage->map(fn($row) => [
+            'date' => $row->date->toDateString(),
+            'project_id' => $row->project_id,
+            'fast' => [
+                'tokens' => $row->fast_tokens,
+                'requests' => $row->fast_requests,
+                'cost_usd' => (float) $row->fast_cost_usd,
+            ],
+            'deep' => [
+                'tokens' => $row->deep_tokens,
+                'requests' => $row->deep_requests,
+                'cost_usd' => (float) $row->deep_cost_usd,
+            ],
+            'grace' => [
+                'tokens' => $row->grace_tokens,
+                'requests' => $row->grace_requests,
+                'cost_usd' => (float) $row->grace_cost_usd,
+            ],
+            'planner' => [
+                'tokens' => $row->planner_tokens,
+                'requests' => $row->planner_requests,
+            ],
+            'total' => [
+                'tokens' => $row->total_tokens,
+                'requests' => $row->total_requests,
+                'cost_usd' => (float) $row->total_cost_usd,
+            ],
+            'cache_hits' => $row->cache_hits,
+            'decomposed_requests' => $row->decomposed_requests,
+        ]);
 
         return response()->json([
-            'data' => $usage,
+            'data' => $formattedUsage,
             'period' => [
                 'from' => $from,
                 'to' => $to,
             ],
+            'source' => 'aggregated',
         ]);
+    }
+
+    /**
+     * Compute usage directly from LlmRequest table (fallback).
+     */
+    protected function computeUsageFromRequests($projectIds, string $from, string $to): array
+    {
+        $requests = LlmRequest::whereIn('project_id', $projectIds)
+            ->whereBetween('created_at', [$from . ' 00:00:00', $to . ' 23:59:59'])
+            ->where('status', 'success')
+            ->get();
+
+        if ($requests->isEmpty()) {
+            return [];
+        }
+
+        // Group by date
+        $grouped = $requests->groupBy(fn($r) => $r->created_at->toDateString());
+
+        $result = [];
+        foreach ($grouped as $date => $dayRequests) {
+            $fast = $dayRequests->where('tier', 'fast');
+            $deep = $dayRequests->where('tier', 'deep');
+            $grace = $dayRequests->where('tier', 'grace');
+
+            $fastTokens = $fast->sum('input_tokens') + $fast->sum('output_tokens');
+            $deepTokens = $deep->sum('input_tokens') + $deep->sum('output_tokens');
+            $graceTokens = $grace->sum('input_tokens') + $grace->sum('output_tokens');
+
+            $result[] = [
+                'date' => $date,
+                'fast' => [
+                    'tokens' => $fastTokens,
+                    'requests' => $fast->count(),
+                    'cost_usd' => $fast->sum('cost_usd'),
+                ],
+                'deep' => [
+                    'tokens' => $deepTokens,
+                    'requests' => $deep->count(),
+                    'cost_usd' => $deep->sum('cost_usd'),
+                ],
+                'grace' => [
+                    'tokens' => $graceTokens,
+                    'requests' => $grace->count(),
+                    'cost_usd' => $grace->sum('cost_usd'),
+                ],
+                'total' => [
+                    'tokens' => $fastTokens + $deepTokens + $graceTokens,
+                    'requests' => $dayRequests->count(),
+                    'cost_usd' => $dayRequests->sum('cost_usd'),
+                ],
+            ];
+        }
+
+        return collect($result)->sortBy('date')->values()->all();
     }
 
     /**

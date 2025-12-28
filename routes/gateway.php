@@ -12,17 +12,30 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-Route::prefix('v1')->middleware([
+$gatewayMiddleware = [
     \App\Http\Middleware\RequestIdMiddleware::class,
     \App\Http\Middleware\AuthenticateProjectApiKey::class,
     \App\Http\Middleware\CheckUserStatus::class,
     \App\Http\Middleware\RateLimitMiddleware::class,
     \App\Http\Middleware\QuotaCheckMiddleware::class,
-])->group(function () {
-    // OpenAI-compatible chat completions endpoint
+];
+
+// Standard OpenAI-compatible endpoint: /v1/chat/completions
+Route::prefix('v1')->middleware($gatewayMiddleware)->group(function () {
     Route::post('/chat/completions', [GatewayController::class, 'chatCompletions']);
-    
-    // Model listing (for Cursor compatibility)
+    Route::get('/models', [GatewayController::class, 'listModels']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Cursor IDE Special Endpoint
+|--------------------------------------------------------------------------
+| LiteLLM recommends using /cursor prefix for Cursor IDE integration
+| Base URL in Cursor: https://api.codexflow.dev/v1/cursor
+|--------------------------------------------------------------------------
+*/
+Route::prefix('v1/cursor')->middleware($gatewayMiddleware)->group(function () {
+    Route::post('/chat/completions', [GatewayController::class, 'chatCompletions']);
     Route::get('/models', [GatewayController::class, 'listModels']);
 });
 

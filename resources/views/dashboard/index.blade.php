@@ -57,7 +57,7 @@
                 <span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded">ÜCRETSİZ</span>
             </div>
             <div class="text-2xl font-bold mb-2" x-text="formatNumber(daily?.grace?.tokens || 0)"></div>
-            <p class="text-xs text-gray-500">Llama 405B - Kota bitince aktif</p>
+            <p class="text-xs text-gray-500">Kota bitince ücretsiz devam</p>
         </div>
         
         <!-- Requests Today -->
@@ -82,7 +82,7 @@
     "cursor": {
       "provider": "openai",
       "api_key": "<span class="text-brand-400">API_KEY_İNİZ</span>",
-      "base_url": "https://codexflow.dev/api/v1"
+      "base_url": "https://api.codexflow.dev/v1"
     }
   }
 }</code></pre>

@@ -16,10 +16,21 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex justify-between h-16 items-center">
                 <div class="flex items-center space-x-2">
-                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-purple-500 flex items-center justify-center">
-                        <span class="text-white font-bold text-sm">CF</span>
-                    </div>
-                    <span class="font-semibold text-lg">CodexFlow</span>
+                    <svg class="w-9 h-9" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#6366f1"/>
+                                <stop offset="50%" style="stop-color:#8b5cf6"/>
+                                <stop offset="100%" style="stop-color:#d946ef"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="2" y="2" width="36" height="36" rx="10" fill="url(#logoGrad)"/>
+                        <path d="M12 14L20 10L28 14V20L20 24L12 20V14Z" stroke="white" stroke-width="1.5" fill="none"/>
+                        <path d="M20 24V30" stroke="white" stroke-width="1.5"/>
+                        <path d="M12 20L20 24L28 20" stroke="white" stroke-width="1.5" fill="none"/>
+                        <circle cx="20" cy="17" r="3" fill="white" fill-opacity="0.9"/>
+                    </svg>
+                    <span class="font-semibold text-lg tracking-tight">CodexFlow</span>
                 </div>
                 
                 <div class="flex items-center space-x-4">
@@ -48,9 +59,9 @@
             </h1>
             
             <p class="text-xl text-dark-300 max-w-2xl mx-auto mb-8">
-                Claude ve GPT modellerine tek API key ile erişin. 
-                3 farklı Anthropic org havuzu, akıllı yük dengeleme, 
-                kotanız bitince Llama 405B FREE ile sınırsız devam.
+                Claude ve GPT modellerine tek API key ile erişin.
+                Akıllı yük dengeleme, otomatik failover ve %99.9 uptime garantisi.
+                Cursor AI entegrasyonu dakikalar içinde hazır.
             </p>
             
             <div class="flex flex-col sm:flex-row justify-center gap-4 mb-12">
@@ -76,7 +87,7 @@
     "cursor": {
       "provider": "openai",
       "api_key": "cf_xxxxx",
-      "base_url": "https://codexflow.dev/api/v1"
+      "base_url": "https://api.codexflow.dev/v1"
     }
   }
 }</code></pre>
@@ -105,7 +116,7 @@
                     <ul class="space-y-3 mb-8 text-dark-300">
                         <li class="flex items-center"><span class="text-green-400 mr-2">✓</span> 200K fast token</li>
                         <li class="flex items-center"><span class="text-green-400 mr-2">✓</span> 50K deep token</li>
-                        <li class="flex items-center"><span class="text-green-400 mr-2">✓</span> Kota bitince Llama FREE!</li>
+                        <li class="flex items-center"><span class="text-green-400 mr-2">✓</span> Sınırsız fallback desteği</li>
                         <li class="flex items-center"><span class="text-green-400 mr-2">✓</span> Kredi kartı gerektirmez</li>
                     </ul>
                     
@@ -199,9 +210,20 @@
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex flex-col md:flex-row justify-between items-center">
                 <div class="flex items-center space-x-2 mb-4 md:mb-0">
-                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-brand-500 to-purple-500 flex items-center justify-center">
-                        <span class="text-white font-bold text-sm">CF</span>
-                    </div>
+                    <svg class="w-8 h-8" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="logoGradFooter" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#6366f1"/>
+                                <stop offset="50%" style="stop-color:#8b5cf6"/>
+                                <stop offset="100%" style="stop-color:#d946ef"/>
+                            </linearGradient>
+                        </defs>
+                        <rect x="2" y="2" width="36" height="36" rx="10" fill="url(#logoGradFooter)"/>
+                        <path d="M12 14L20 10L28 14V20L20 24L12 20V14Z" stroke="white" stroke-width="1.5" fill="none"/>
+                        <path d="M20 24V30" stroke="white" stroke-width="1.5"/>
+                        <path d="M12 20L20 24L28 20" stroke="white" stroke-width="1.5" fill="none"/>
+                        <circle cx="20" cy="17" r="3" fill="white" fill-opacity="0.9"/>
+                    </svg>
                     <span class="font-semibold">CodexFlow.dev</span>
                 </div>
                 
