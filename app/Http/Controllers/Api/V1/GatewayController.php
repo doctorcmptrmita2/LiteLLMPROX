@@ -449,10 +449,11 @@ class GatewayController extends Controller
             ],
         ];
 
+        // LiteLLM extension expects: { data: { data: [...] } }
+        // But we're returning: { data: { data: { data: [...] } } }
+        // Fix: Return directly as { data: [...] }
         return response()->json([
-            'data' => [
-                'data' => $models,
-            ],
+            'data' => $models,
         ]);
     }
 }
