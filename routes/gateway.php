@@ -24,6 +24,8 @@ $gatewayMiddleware = [
 Route::prefix('v1')->middleware($gatewayMiddleware)->group(function () {
     Route::post('/chat/completions', [GatewayController::class, 'chatCompletions']);
     Route::get('/models', [GatewayController::class, 'listModels']);
+    // LiteLLM model info endpoint (for VS Code extension compatibility)
+    Route::get('/model/info', [GatewayController::class, 'modelInfo']);
 });
 
 /*

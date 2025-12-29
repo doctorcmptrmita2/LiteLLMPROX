@@ -359,6 +359,102 @@ class GatewayController extends Controller
             'data' => $models,
         ]);
     }
+
+    /**
+     * LiteLLM model info endpoint (for VS Code extension compatibility).
+     * Returns detailed model information in LiteLLM format.
+     */
+    public function modelInfo(): JsonResponse
+    {
+        $models = [
+            [
+                'model_name' => 'cf-fast',
+                'model_info' => [
+                    'max_output_tokens' => 8192,
+                    'max_input_tokens' => 200000,
+                    'supports_vision' => false,
+                    'supports_prompt_caching' => true,
+                    'input_cost_per_token' => 0.0000008, // $0.80 per 1M tokens
+                    'output_cost_per_token' => 0.000004,  // $4.00 per 1M tokens
+                    'cache_creation_input_token_cost' => 0.0000008,
+                    'cache_read_input_token_cost' => 0.00000008,
+                ],
+                'litellm_params' => [
+                    'model' => 'claude-3-5-haiku',
+                ],
+            ],
+            [
+                'model_name' => 'cf-deep',
+                'model_info' => [
+                    'max_output_tokens' => 8192,
+                    'max_input_tokens' => 200000,
+                    'supports_vision' => true,
+                    'supports_prompt_caching' => true,
+                    'input_cost_per_token' => 0.000003,  // $3.00 per 1M tokens
+                    'output_cost_per_token' => 0.000015,   // $15.00 per 1M tokens
+                    'cache_creation_input_token_cost' => 0.000003,
+                    'cache_read_input_token_cost' => 0.0000003,
+                ],
+                'litellm_params' => [
+                    'model' => 'claude-sonnet-4',
+                ],
+            ],
+            [
+                'model_name' => 'cf-grace',
+                'model_info' => [
+                    'max_output_tokens' => 8192,
+                    'max_input_tokens' => 200000,
+                    'supports_vision' => false,
+                    'supports_prompt_caching' => false,
+                    'input_cost_per_token' => 0, // FREE
+                    'output_cost_per_token' => 0, // FREE
+                    'cache_creation_input_token_cost' => 0,
+                    'cache_read_input_token_cost' => 0,
+                ],
+                'litellm_params' => [
+                    'model' => 'llama-3.1-405b',
+                ],
+            ],
+            [
+                'model_name' => 'cf-planner',
+                'model_info' => [
+                    'max_output_tokens' => 4096,
+                    'max_input_tokens' => 128000,
+                    'supports_vision' => false,
+                    'supports_prompt_caching' => false,
+                    'input_cost_per_token' => 0.00000015, // $0.15 per 1M tokens
+                    'output_cost_per_token' => 0.0000006,  // $0.60 per 1M tokens
+                    'cache_creation_input_token_cost' => 0.00000015,
+                    'cache_read_input_token_cost' => 0.000000015,
+                ],
+                'litellm_params' => [
+                    'model' => 'gpt-4o-mini',
+                ],
+            ],
+            [
+                'model_name' => 'cf-grace-fallback',
+                'model_info' => [
+                    'max_output_tokens' => 8192,
+                    'max_input_tokens' => 128000,
+                    'supports_vision' => false,
+                    'supports_prompt_caching' => false,
+                    'input_cost_per_token' => 0.00000015, // $0.15 per 1M tokens
+                    'output_cost_per_token' => 0.0000006,  // $0.60 per 1M tokens
+                    'cache_creation_input_token_cost' => 0.00000015,
+                    'cache_read_input_token_cost' => 0.000000015,
+                ],
+                'litellm_params' => [
+                    'model' => 'gpt-4o-mini',
+                ],
+            ],
+        ];
+
+        return response()->json([
+            'data' => [
+                'data' => $models,
+            ],
+        ]);
+    }
 }
 
 
